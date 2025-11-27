@@ -12,23 +12,18 @@ set -euo pipefail
 ########################################
 
 REQUIRED_CMDS=( ffmpeg ffprobe jq )
-MISSING_CMDS=()
 
 ensure_dependencies() {
-  MISSING_CMDS=()
+  local missing=()
 
   for cmd in $REQUIRED_CMDS; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      MISSING_CMDS+=("$cmd")
-    fi
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
-  if (( ${#MISSING_CMDS[@]} == 0 )); then
-    return 0
-  fi
+  (( ${#missing[@]} == 0 )) && return 0
 
   print -P "%F{red}❌ MANCANO DIPENDENZE:%f"
-  for m in $MISSING_CMDS; do print " - $m"; done
+  for m in $missing; do print " - $m"; done
 
   vared -p "Vuoi installarle ora con Homebrew? [s/n] " choice
 
@@ -39,7 +34,7 @@ ensure_dependencies() {
       print -P "%F{cyan}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"%f"
       exit 1
     fi
-    for m in $MISSING_CMDS; do
+    for m in $missing; do
       brew install "$m"
     done
   else
@@ -266,7 +261,7 @@ run_ffmpeg_with_progress() {
   shift
 
   local -a cmd=( "$@" -hide_banner -loglevel error -nostats -progress pipe:1 )
-  local -F duration_f=0
+  local -F duration_f=${duration:-0}
   local -F out_sec=0
   local -F progress=0
   local -F speed_val=0
@@ -274,8 +269,6 @@ run_ffmpeg_with_progress() {
   local eta_str="--:--"
   local bitrate="?"
   local speed="?"
-
-  (( duration_f = ${duration:-0} ))
 
   {
     "${cmd[@]}" | while IFS='=' read -r key value; do
@@ -294,12 +287,9 @@ run_ffmpeg_with_progress() {
       esac
 
       eta_str="--:--"
-      if (( duration_f > 0 )) && (( speed_val > 0 )); then
+      if (( duration_f > 0 && speed_val > 0 )); then
         (( eta_sec = (duration_f - out_sec) / speed_val ))
-        local eta_min eta_rem
-        eta_min=$(( eta_sec / 60 ))
-        eta_rem=$(( eta_sec - (eta_min * 60) ))
-        eta_str=$(printf "%02d:%02d" eta_min eta_rem)
+        eta_str=$(printf "%02d:%02d" $(( eta_sec / 60 )) $(( eta_sec % 60 )))
       fi
 
       printf "\rProgress: %5.1f%% | ETA: %s | Bitrate: %s | Speed: %s" \
@@ -502,6 +492,8 @@ run_encoding_loop() {
   # Usiamo una mappa solo per i percorsi di output (stringhe semplici)
   typeset -A OUTPUT_FILES_MAP
   typeset -A COLOR_PROFILE_MAP
+  typeset -A FILE_JSON_MAP
+  typeset -A DURATION_MAP
 
   # ------------------------------------
   # PHASE 1: PREPARAZIONE E RIEPILOGO
@@ -516,6 +508,8 @@ run_encoding_loop() {
     local json
     json="$(get_file_json "$file")"
     FILE_JSON="$json"
+    FILE_JSON_MAP[$idx]="$json"
+    DURATION_MAP[$idx]="$(echo "$json" | jq -r '.format.duration // 0')"
 
     interactive_track_selection "$idx" "$json" "audio"
     print ""
@@ -580,9 +574,9 @@ run_encoding_loop() {
     print "$file"
     print ""
 
-    # 1. Recupera di nuovo il JSON
+    # 1. Recupera il JSON salvato
     local json
-    json="$(get_file_json "$file")"
+    json="${FILE_JSON_MAP[$idx]}"
     FILE_JSON="$json"
 
     # 2. RICOSTRUISCE IL COMANDO AL VOLO
@@ -592,7 +586,7 @@ run_encoding_loop() {
 
     # 3. ESEGUE CON BARRA DI AVANZAMENTO
     local duration
-    duration="$(echo "$FILE_JSON" | jq -r '.format.duration // 0')"
+    duration="${DURATION_MAP[$idx]:-0}"
 
     run_ffmpeg_with_progress "$duration" "${CMD[@]}"
 
