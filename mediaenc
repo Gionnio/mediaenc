@@ -14,13 +14,19 @@ set -euo pipefail
 REQUIRED_CMDS=( ffmpeg ffprobe jq )
 MISSING_CMDS=()
 
-for cmd in $REQUIRED_CMDS; do
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    MISSING_CMDS+="$cmd"
-  fi
-done
+ensure_dependencies() {
+  MISSING_CMDS=()
 
-if (( ${#MISSING_CMDS[@]} > 0 )); then
+  for cmd in $REQUIRED_CMDS; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      MISSING_CMDS+=("$cmd")
+    fi
+  done
+
+  if (( ${#MISSING_CMDS[@]} == 0 )); then
+    return 0
+  fi
+
   print -P "%F{red}❌ MANCANO DIPENDENZE:%f"
   for m in $MISSING_CMDS; do print " - $m"; done
 
@@ -39,7 +45,7 @@ if (( ${#MISSING_CMDS[@]} > 0 )); then
   else
     exit 1
   fi
-fi
+}
 
 
 
@@ -395,7 +401,7 @@ run_encoding_loop() {
     interactive_track_selection "$idx" "$json" "subtitle"
 
     # --- PATH OUTPUT FORZATO ---
-    outdir="/Users/gianluca/Movies"
+    outdir="${HOME}/Movies"
     mkdir -p "$outdir"
 
     base="${file:t}"
@@ -471,10 +477,10 @@ run_encoding_loop() {
 ########################################
 
 main() {
+  ensure_dependencies
   choose_preset
   ask_input_path
   collect_video_files
   run_encoding_loop
 }
-
 main "$@"
