@@ -54,11 +54,16 @@ ensure_dependencies() {
 ########################################
 
 # 4K PRESET (VideoToolbox Quality Mode)
-# HandBrake CQ 60 = ffmpeg -q:v 60
+# HandBrake CQ 60 ≈ ffmpeg -q:v 60
 typeset -a PRESET_4K_VIDEO_OPTS=(
   -c:v hevc_videotoolbox
   -profile:v main10
   -pix_fmt p010le
+  -vsync vfr
+  -color_range tv
+  -color_primaries bt2020
+  -color_trc smpte2084
+  -colorspace bt2020nc
   -q:v 60
 )
 PRESET_4K_AUDIO_FALLBACK_BITRATE="320k"
@@ -316,7 +321,7 @@ build_ffmpeg_command_for_file() {
 
   # Reimposta l'array globale CMD
   typeset -ga CMD
-  CMD=( ffmpeg -y -i "$file" )
+  CMD=( ffmpeg -y -i "$file" -map_metadata 0 -map_chapters 0 )
 
   # --- VIDEO ---
   CMD+=( -map 0:v:0 )
