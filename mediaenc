@@ -219,6 +219,15 @@ determine_color_flags() {
 
   local hdr_l="${hdr:l}"
 
+  local hdr_side_data=0
+  if echo "$json" | jq -e '.streams[]
+    | select(.codec_type=="video")
+    | (.side_data_list // [])[]
+    | select(.side_data_type | test("(?i)(mastering display metadata|content light level metadata|hdr dynamic metadata)"))
+    | .side_data_type' >/dev/null; then
+    hdr_side_data=1
+  fi
+
   if [[ "$hdr_l" == *"dolby_vision"* ]]; then
     COLOR_PROFILE_LABEL="Dolby Vision"
     primaries="${primaries:-bt2020}"
@@ -233,6 +242,11 @@ determine_color_flags() {
     COLOR_PROFILE_LABEL="HDR10"
     primaries="${primaries:-bt2020}"
     transfer="smpte2084"
+    space="${space:-bt2020nc}"
+  elif (( hdr_side_data == 1 )); then
+    COLOR_PROFILE_LABEL="HDR10"
+    primaries="${primaries:-bt2020}"
+    transfer="${transfer:-smpte2084}"
     space="${space:-bt2020nc}"
   else
     COLOR_PROFILE_LABEL="SDR"
