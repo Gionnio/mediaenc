@@ -60,10 +60,6 @@ typeset -a PRESET_4K_VIDEO_OPTS=(
   -profile:v main10
   -pix_fmt p010le
   -vsync vfr
-  -color_range tv
-  -color_primaries bt2020
-  -color_trc smpte2084
-  -colorspace bt2020nc
   -q:v 60
 )
 PRESET_4K_AUDIO_FALLBACK_BITRATE="320k"
@@ -201,7 +197,68 @@ get_file_json() {
 
 
 ########################################
-# 8) Monitoraggio ffmpeg
+# 8) Rilevazione automatica spazio colore
+########################################
+
+COLOR_PROFILE_LABEL=""
+typeset -a COLOR_FLAGS
+
+determine_color_flags() {
+  local json="$1"
+
+  local color_line
+  color_line="$(echo "$json" | jq -r '
+    (.streams[] | select(.codec_type=="video") |
+     [(.color_primaries // ""), (.color_transfer // ""), (.color_space // ""), (.color_range // ""), (.hdr_format // "")])
+    | @tsv
+  ' | head -n1)"
+
+  local -a parts
+  parts=("${(@s:\t:)color_line}")
+
+  local primaries="${parts[1]:-}"
+  local transfer="${parts[2]:-}"
+  local space="${parts[3]:-}"
+  local range="${parts[4]:-}"
+  local hdr="${parts[5]:-}"
+
+  local hdr_l="${hdr:l}"
+
+  if [[ "$hdr_l" == *"dolby_vision"* ]]; then
+    COLOR_PROFILE_LABEL="Dolby Vision"
+    primaries="${primaries:-bt2020}"
+    transfer="${transfer:-smpte2084}"
+    space="${space:-bt2020nc}"
+  elif [[ "$transfer" == "arib-std-b67" || "$hdr_l" == *"hlg"* ]]; then
+    COLOR_PROFILE_LABEL="HLG"
+    primaries="${primaries:-bt2020}"
+    transfer="arib-std-b67"
+    space="${space:-bt2020nc}"
+  elif [[ "$transfer" == "smpte2084" || "$hdr_l" == *"hdr10"* ]]; then
+    COLOR_PROFILE_LABEL="HDR10"
+    primaries="${primaries:-bt2020}"
+    transfer="smpte2084"
+    space="${space:-bt2020nc}"
+  else
+    COLOR_PROFILE_LABEL="SDR"
+    primaries="${primaries:-bt709}"
+    transfer="${transfer:-bt709}"
+    space="${space:-bt709}"
+  fi
+
+  [[ -z "$range" ]] && range="tv"
+
+  COLOR_FLAGS=(
+    -color_range "$range"
+    -color_primaries "$primaries"
+    -color_trc "$transfer"
+    -colorspace "$space"
+  )
+}
+
+
+########################################
+# 9) Monitoraggio ffmpeg
 ########################################
 
 run_ffmpeg_with_progress() {
@@ -257,7 +314,7 @@ run_ffmpeg_with_progress() {
 
 
 ########################################
-# 9) Scelta tracce (ROBUSTA)
+# 10) Scelta tracce (ROBUSTA)
 ########################################
 
 typeset -A AUDIO_STREAMS_SELECTED
@@ -365,7 +422,7 @@ interactive_track_selection() {
 
 
 ########################################
-# 10) Build comando ffmpeg (CLEAN)
+# 11) Build comando ffmpeg (CLEAN)
 ########################################
 
 # Questa funzione costruisce l'array CMD globale
@@ -382,6 +439,8 @@ build_ffmpeg_command_for_file() {
   # --- VIDEO ---
   CMD+=( -map 0:v:0 )
   CMD+=( "${PRESET_VIDEO_OPTS[@]}" )
+  determine_color_flags "$json"
+  CMD+=( "${COLOR_FLAGS[@]}" )
 
   # --- AUDIO ---
   local sel_str="${AUDIO_STREAMS_SELECTED[$idx]:-}"
@@ -434,14 +493,15 @@ build_ffmpeg_command_for_file() {
 
 
 ########################################
-# 11) LOOP + conferma finale (FIXED OUTPUT DIR)
+# 12) LOOP + conferma finale (FIXED OUTPUT DIR)
 ########################################
 
 run_encoding_loop() {
   local file idx base outdir outfile
-  
+
   # Usiamo una mappa solo per i percorsi di output (stringhe semplici)
   typeset -A OUTPUT_FILES_MAP
+  typeset -A COLOR_PROFILE_MAP
 
   # ------------------------------------
   # PHASE 1: PREPARAZIONE E RIEPILOGO
@@ -470,9 +530,12 @@ run_encoding_loop() {
     outfile="${outdir}/${base}_enc_${PRESET_NAME}.mkv"
 
     OUTPUT_FILES_MAP[$idx]="$outfile"
-    
+
     # Costruiamo il comando qui SOLO per verificare che non ci siano errori
     build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
+
+    # Salva il profilo colore rilevato per riepilogo
+    COLOR_PROFILE_MAP[$idx]="$COLOR_PROFILE_LABEL"
   done
 
   clear
@@ -487,6 +550,9 @@ run_encoding_loop() {
     local aud="${AUDIO_STREAMS_SELECTED[$idx]:-}"
     [[ -z "$aud" ]] && aud="(nessuno)"
     print -P "%F{cyan}  Audio IDs:%f  $aud"
+
+    local color_profile="${COLOR_PROFILE_MAP[$idx]:-SDR}"
+    print -P "%F{cyan}  Colore:%f    $color_profile"
 
     local sub="${SUB_STREAMS_SELECTED[$idx]:-}"
     [[ -z "$sub" ]] && sub="(nessuno)"
@@ -522,6 +588,8 @@ run_encoding_loop() {
     # 2. RICOSTRUISCE IL COMANDO AL VOLO
     build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
 
+    print_info "Spazio colore rilevato: $COLOR_PROFILE_LABEL"
+
     # 3. ESEGUE CON BARRA DI AVANZAMENTO
     local duration
     duration="$(echo "$FILE_JSON" | jq -r '.format.duration // 0')"
@@ -537,7 +605,7 @@ run_encoding_loop() {
 
 
 ########################################
-# 12) MAIN
+# 13) MAIN
 ########################################
 
 main() {
