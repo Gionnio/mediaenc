@@ -1,0 +1,480 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+################################################################################
+#                       MEDIAENC – macOS
+#       ffmpeg + VideoToolbox 10bit — Preset 4K + Preset 1080p (HandBrake 1:1)
+################################################################################
+
+
+########################################
+# 1) Controllo dipendenze
+########################################
+
+REQUIRED_CMDS=( ffmpeg ffprobe jq )
+MISSING_CMDS=()
+
+for cmd in $REQUIRED_CMDS; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    MISSING_CMDS+="$cmd"
+  fi
+done
+
+if (( ${#MISSING_CMDS[@]} > 0 )); then
+  print -P "%F{red}❌ MANCANO DIPENDENZE:%f"
+  for m in $MISSING_CMDS; do print " - $m"; done
+
+  vared -p "Vuoi installarle ora con Homebrew? [s/n] " choice
+
+  if [[ "$choice" == [sS] ]]; then
+    if ! command -v brew >/dev/null 2>&1; then
+      print -P "%F{yellow}⚠️ Homebrew non installato.%f"
+      print "Installa prima Homebrew:"
+      print -P "%F{cyan}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"%f"
+      exit 1
+    fi
+    for m in $MISSING_CMDS; do
+      brew install "$m"
+    done
+  else
+    exit 1
+  fi
+fi
+
+
+
+########################################
+# 2) PRESET DEFINITIONS
+########################################
+
+# 4K PRESET (VideoToolbox Quality Mode)
+# HandBrake CQ 60 = ffmpeg -q:v 60
+typeset -a PRESET_4K_VIDEO_OPTS=(
+  -c:v hevc_videotoolbox
+  -profile:v main10
+  -pix_fmt p010le
+  -q:v 60
+)
+PRESET_4K_AUDIO_FALLBACK_BITRATE="320k"
+typeset -a PASSTHROUGH_CODECS_4K=( aac ac3 eac3 dtshd dts mp3 opus truehd flac )
+
+# 1080p PRESET (VideoToolbox Quality Mode)
+typeset -a PRESET_1080_VIDEO_OPTS=(
+  -c:v hevc_videotoolbox
+  -profile:v main10
+  -pix_fmt p010le
+  -q:v 60
+)
+PRESET_1080_AUDIO_FALLBACK_BITRATE="256k"
+typeset -a PASSTHROUGH_CODECS_1080P=( aac ac3 eac3 dtshd dts mp3 truehd )
+
+
+########################################
+# 3) Utility
+########################################
+
+print_error() { print -P "%F{red}[ERRORE]%f $*"; }
+print_ok()    { print -P "%F{green}[OK]%f $*"; }
+print_info()  { print -P "%F{cyan}[INFO]%f $*"; }
+
+
+########################################
+# 4) Selezione preset
+########################################
+
+choose_preset() {
+  local choice
+  while true; do
+    clear
+    print -P "%F{green}=== MEDIAENC ===%f"
+    print ""
+    print "Seleziona preset:"
+    print " [1] 4K (HDR x265 10bit - Quality )"
+    print " [2] 1080p (SDR x265 10bit - Quality )"
+    print " [q] Esci"
+    vared -p "Scelta: " choice
+
+    case "$choice" in
+      1)
+        PRESET_NAME="4K"
+        PRESET_VIDEO_OPTS=("${PRESET_4K_VIDEO_OPTS[@]}")
+        PRESET_AUDIO_BITRATE="$PRESET_4K_AUDIO_FALLBACK_BITRATE"
+        PASSTHROUGH_LIST=("${PASSTHROUGH_CODECS_4K[@]}")
+        break
+        ;;
+      2)
+        PRESET_NAME="1080p"
+        PRESET_VIDEO_OPTS=("${PRESET_1080_VIDEO_OPTS[@]}")
+        PRESET_AUDIO_BITRATE="$PRESET_1080_AUDIO_FALLBACK_BITRATE"
+        PASSTHROUGH_LIST=("${PASSTHROUGH_CODECS_1080P[@]}")
+        break
+        ;;
+      q|Q)
+        exit 0
+        ;;
+    esac
+  done
+  print_ok "Preset selezionato: $PRESET_NAME"
+}
+
+
+########################################
+# 5) Input: gestione trascinamento
+########################################
+
+ask_input_path() {
+  local raw path
+  print ""
+  print "Trascina qui un file o una cartella e premi INVIO:"
+  vared -p "> " raw
+
+  # Trim spazi
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  
+  # Zsh Unquote: gestisce backslash e virgolette del drag-n-drop
+  path="${(Q)raw}"
+
+  if [[ ! -e "$path" ]]; then
+    print_error "Percorso non esistente: $path"
+    exit 1
+  fi
+  # Percorso assoluto
+  INPUT_PATH="${path:A}"
+  print_ok "Input: $INPUT_PATH"
+}
+
+
+########################################
+# 6) Raccogli file video
+########################################
+
+VIDEO_EXTENSIONS=(mkv mp4 mov avi m4v)
+
+is_video_file() {
+  local ext="${1##*.}"
+  ext="${ext:l}"
+  for e in $VIDEO_EXTENSIONS; do
+    [[ "$ext" == "$e" ]] && return 0
+  done
+  return 1
+}
+
+collect_video_files() {
+  typeset -ga FILE_LIST
+  FILE_LIST=()
+
+  if [[ -f "$INPUT_PATH" ]]; then
+    is_video_file "$INPUT_PATH" || { print_error "Non è un video."; exit 1; }
+    FILE_LIST+=("$INPUT_PATH")
+  else
+    for f in "$INPUT_PATH"/*; do
+      [[ -f "$f" ]] || continue
+      is_video_file "$f" && FILE_LIST+=("$f")
+    done
+  fi
+
+  (( ${#FILE_LIST[@]} == 0 )) && print_error "Nessun file video." && exit 1
+  print_ok "Trovati ${#FILE_LIST[@]} file video."
+}
+
+
+########################################
+# 7) Analisi ffprobe
+########################################
+
+get_file_json() {
+  local file="$1"
+  ffprobe -v quiet -print_format json -show_streams "$file"
+}
+
+
+########################################
+# 8) Scelta tracce (ROBUSTA)
+########################################
+
+typeset -A AUDIO_STREAMS_SELECTED
+typeset -A SUB_STREAMS_SELECTED
+
+interactive_track_selection() {
+  local idx="$1"      # ID numerico del file
+  local json="$2"
+  local type="$3"     # "audio" o "subtitle"
+  local type_label
+  
+  # Inizializza subito
+  if [[ "$type" == "audio" ]]; then
+    type_label="AUDIO"
+    AUDIO_STREAMS_SELECTED[$idx]=""
+  else
+    type_label="SOTTOTITOLI"
+    SUB_STREAMS_SELECTED[$idx]=""
+  fi
+
+  print -P "%F{cyan}--- Selezione $type_label ---%f"
+
+  local raw_list
+  raw_list="$(echo "$json" | jq -r --arg t "$type" '
+    .streams[] | select(.codec_type == $t) 
+    | "\(.index)|\(.tags.language // "und")|\(.codec_name)|\(.channels // 0)|\(.tags.title // "-")"
+  ')"
+
+  if [[ -z "$raw_list" ]]; then
+    print "Nessuna traccia trovata."
+  else
+    local -a lines
+    lines=("${(@f)raw_list}")
+    
+    typeset -a map_indices
+    local i=1
+    local line stream_idx lang codec chans title
+
+    for line in "${lines[@]}"; do
+      local parts=("${(@s:|:)line}")
+      stream_idx="${parts[1]}"
+      lang="${parts[2]}"
+      codec="${parts[3]}"
+      chans="${parts[4]}"
+      title="${parts[5]}"
+
+      map_indices[$i]="$stream_idx"
+      
+      local info_str="[$i] ${lang:u} ($codec)"
+      if [[ "$type" == "audio" ]]; then
+        info_str+=" ${chans}ch"
+      fi
+      if [[ "$title" != "-" ]]; then
+        info_str+=" - $title"
+      fi
+      print "$info_str"
+      ((i++))
+    done
+
+    local choice
+    local prompt_msg="Scegli tracce (es. '1,3' o Invio per "
+    
+    if [[ "$type" == "audio" ]]; then
+      prompt_msg+="Default ITA): "
+    else
+      prompt_msg+="nessuno): "
+    fi
+
+    vared -p "$prompt_msg" choice
+
+    typeset -a selected_indices
+    
+    if [[ -z "$choice" ]]; then
+      if [[ "$type" == "audio" ]]; then
+        local ita_indices
+        ita_indices="$(echo "$json" | jq -r '.streams[] | select(.codec_type=="audio" and .tags.language=="ita") | .index')"
+        if [[ -n "$ita_indices" ]]; then
+          selected_indices=(${(@s:
+:)ita_indices})
+        else
+          local first_idx
+          first_idx="$(echo "$json" | jq -r '.streams[] | select(.codec_type=="audio") | .index' | head -n1)"
+          [[ -n "$first_idx" ]] && selected_indices+=("$first_idx")
+        fi
+      else
+        selected_indices=()
+      fi
+    else
+      choice="${choice//,/ }"
+      local u_idx
+      for u_idx in ${=choice}; do
+        if [[ -n "${map_indices[$u_idx]:-}" ]]; then
+          selected_indices+=("${map_indices[$u_idx]}")
+        fi
+      done
+    fi
+
+    if [[ "$type" == "audio" ]]; then
+      AUDIO_STREAMS_SELECTED[$idx]="${selected_indices[*]}"
+    else
+      SUB_STREAMS_SELECTED[$idx]="${selected_indices[*]}"
+    fi
+  fi
+}
+
+
+########################################
+# 9) Build comando ffmpeg (CLEAN)
+########################################
+
+# Questa funzione costruisce l'array CMD globale
+build_ffmpeg_command_for_file() {
+  local idx="$1"
+  local file="$2"
+  local outfile="$3"
+  local json="$FILE_JSON"
+
+  # Reimposta l'array globale CMD
+  typeset -ga CMD
+  CMD=( ffmpeg -y -i "$file" )
+
+  # --- VIDEO ---
+  CMD+=( -map 0:v:0 )
+  CMD+=( "${PRESET_VIDEO_OPTS[@]}" )
+
+  # --- AUDIO ---
+  local sel_str="${AUDIO_STREAMS_SELECTED[$idx]:-}"
+  typeset -a sel_indices
+  sel_indices=(${=sel_str}) 
+
+  if (( ${#sel_indices[@]} == 0 )); then
+    print_error "ATTENZIONE: Nessuna traccia audio selezionata/trovata."
+  else
+    local s_idx
+    local codec
+    local do_passthrough
+    local out_a_idx=0
+
+    for s_idx in "${sel_indices[@]}"; do
+      CMD+=( -map "0:$s_idx" )
+      
+      codec="$(echo "$json" | jq -r --arg i "$s_idx" '.streams[] | select(.index == ($i|tonumber)) | .codec_name')"
+      
+      do_passthrough=0
+      if [[ " ${PASSTHROUGH_LIST[@]} " =~ " ${codec} " ]]; then
+        do_passthrough=1
+      fi
+
+      if (( do_passthrough == 1 )); then
+        CMD+=( "-c:a:$out_a_idx" copy )
+      else
+        CMD+=( "-c:a:$out_a_idx" ac3 "-b:a:$out_a_idx" "$PRESET_AUDIO_BITRATE" )
+      fi
+      
+      (( ++out_a_idx ))
+    done
+  fi
+
+  # --- SOTTOTITOLI ---
+  local sub_str="${SUB_STREAMS_SELECTED[$idx]:-}"
+  typeset -a sub_indices
+  sub_indices=(${=sub_str})
+
+  if (( ${#sub_indices[@]} > 0 )); then
+    local s_idx
+    for s_idx in "${sub_indices[@]}"; do
+      CMD+=( -map "0:$s_idx" )
+    done
+    CMD+=( -c:s copy )
+  fi
+
+  CMD+=( "$outfile" )
+}
+
+
+########################################
+# 10) LOOP + conferma finale (FIXED OUTPUT DIR)
+########################################
+
+run_encoding_loop() {
+  local file idx base outdir outfile
+  
+  # Usiamo una mappa solo per i percorsi di output (stringhe semplici)
+  typeset -A OUTPUT_FILES_MAP
+
+  # ------------------------------------
+  # PHASE 1: PREPARAZIONE E RIEPILOGO
+  # ------------------------------------
+  for idx in {1..${#FILE_LIST[@]}}; do
+    file="${FILE_LIST[$idx]}"
+    
+    print -P "%F{yellow}==============================%f"
+    print "File #$idx / ${#FILE_LIST[@]}"
+    print "$file"
+
+    local json
+    json="$(get_file_json "$file")"
+    FILE_JSON="$json"
+
+    interactive_track_selection "$idx" "$json" "audio"
+    print ""
+    interactive_track_selection "$idx" "$json" "subtitle"
+
+    # --- PATH OUTPUT FORZATO ---
+    outdir="/Users/gianluca/Movies"
+    mkdir -p "$outdir"
+
+    base="${file:t}"
+    base="${base%.*}"
+    outfile="${outdir}/${base}_enc_${PRESET_NAME}.mkv"
+
+    OUTPUT_FILES_MAP[$idx]="$outfile"
+    
+    # Costruiamo il comando qui SOLO per verificare che non ci siano errori
+    build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
+  done
+
+  clear
+  print -P "%F{green}===== RIEPILOGO =====%f"
+  print ""
+
+  for idx in {1..${#FILE_LIST[@]}}; do
+    file="${FILE_LIST[$idx]}"
+    print -P "%F{cyan}→ Input:%f $file"
+    print -P "%F{cyan}  Output:%f ${OUTPUT_FILES_MAP[$idx]:-}"
+    
+    local aud="${AUDIO_STREAMS_SELECTED[$idx]:-}"
+    [[ -z "$aud" ]] && aud="(nessuno)"
+    print -P "%F{cyan}  Audio IDs:%f  $aud"
+
+    local sub="${SUB_STREAMS_SELECTED[$idx]:-}"
+    [[ -z "$sub" ]] && sub="(nessuno)"
+    print -P "%F{cyan}  Sub IDs:%f    $sub"
+    print ""
+  done
+
+  local choice
+  vared -p "Avvia encoding? [s/n] " choice
+  [[ "$choice" == [sS] ]] || { print "Annullato."; exit 0; }
+
+
+  # ------------------------------------
+  # PHASE 2: ESECUZIONE (REBUILD & RUN)
+  # ------------------------------------
+  clear
+  print -P "%F{green}Inizio codifica...%f"
+
+  for idx in {1..${#FILE_LIST[@]}}; do
+    file="${FILE_LIST[$idx]}"
+    outfile="${OUTPUT_FILES_MAP[$idx]}"
+    
+    print -P "%F{yellow}==============================%f"
+    print "Encoding File #$idx:"
+    print "$file"
+    print ""
+
+    # 1. Recupera di nuovo il JSON
+    local json
+    json="$(get_file_json "$file")"
+    FILE_JSON="$json"
+
+    # 2. RICOSTRUISCE IL COMANDO AL VOLO
+    build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
+
+    # 3. ESEGUE DIRETTAMENTE
+    "${CMD[@]}"
+
+    print -P "%F{green}✓ Completato:%f $outfile"
+    print ""
+  done
+
+  print -P "%F{green}===== COMPLETATO =====%f"
+}
+
+
+########################################
+# 11) MAIN
+########################################
+
+main() {
+  choose_preset
+  ask_input_path
+  collect_video_files
+  run_encoding_loop
+}
+
+main "$@"
