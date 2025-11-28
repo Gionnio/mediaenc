@@ -104,7 +104,7 @@ ask_video_options() {
   vared -p "Rilevare e tagliare automaticamente le bande nere? [s/N] " choice
   if [[ "$choice" == [sS] ]]; then
     AUTO_CROP=1
-    print_ok "Auto-crop attivo (analisi rapida dei primi fotogrammi)."
+    print_ok "Auto-crop attivo (analisi di 120 fotogrammi a metà video)."
   else
     AUTO_CROP=0
   fi
@@ -275,10 +275,16 @@ run_ffmpeg_with_progress() {
 
 detect_crop_for_file() {
   local file="$1"
+  local duration="$2"
+  local -F start_sec=0
   local crop_line
 
-  crop_line="$(
-    ffmpeg -v error -i "$file" -filter:v "cropdetect=24:16:0" -frames:v 120 -f null - 2>&1 \
+  if [[ -n "$duration" ]]; then
+    (( start_sec = duration / 2 ))
+  fi
+
+  crop_line="$({
+    ffmpeg -v error -ss "$start_sec" -i "$file" -filter:v "cropdetect=24:16:0" -frames:v 120 -f null - 2>&1 \
       | grep -oE "crop=[0-9]+:[0-9]+:[0-9]+:[0-9]+" \
       | tail -n1
   )" || true
@@ -432,13 +438,14 @@ interactive_track_selection() {
 prepare_video_filters_for_file() {
   local idx="$1"
   local file="$2"
+  local duration="$3"
 
   typeset -a filters
   filters=()
 
   if (( AUTO_CROP == 1 )); then
     local crop_val="${CROP_RESULTS[$idx]:-}"
-    [[ -z "$crop_val" ]] && crop_val="$(detect_crop_for_file "$file")" && CROP_RESULTS[$idx]="$crop_val"
+    [[ -z "$crop_val" ]] && crop_val="$(detect_crop_for_file "$file" "$duration")" && CROP_RESULTS[$idx]="$crop_val"
     [[ -n "$crop_val" ]] && filters+=("$crop_val")
   fi
 
@@ -546,7 +553,7 @@ run_encoding_loop() {
     print ""
     interactive_track_selection "$idx" "$json" "subtitle"
 
-    prepare_video_filters_for_file "$idx" "$file"
+    prepare_video_filters_for_file "$idx" "$file" "${DURATION_MAP[$idx]:-}"
 
     # --- PATH OUTPUT FORZATO ---
     outdir="${HOME}/Movies"
