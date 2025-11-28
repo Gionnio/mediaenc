@@ -34,9 +34,10 @@ ensure_dependencies() {
 
   if [[ "$choice" == [sS] ]]; then
     if ! command -v brew >/dev/null 2>&1; then
+      local brew_cmd='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
       print -P "%F{yellow}⚠️ Homebrew non installato.%f"
       print "Installa prima Homebrew:"
-      print -P "%F{cyan}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"%f"
+      print -P "%F{cyan}${brew_cmd}%f"
       exit 1
     fi
     for m in $MISSING_CMDS; do
