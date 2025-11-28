@@ -12,18 +12,17 @@ set -euo pipefail
 ########################################
 
 REQUIRED_CMDS=( ffmpeg ffprobe jq )
+MISSING_CMDS=()
 
-ensure_dependencies() {
-  local missing=()
+for cmd in $REQUIRED_CMDS; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    MISSING_CMDS+="$cmd"
+  fi
+done
 
-  for cmd in $REQUIRED_CMDS; do
-    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-  done
-
-  (( ${#missing[@]} == 0 )) && return 0
-
+if (( ${#MISSING_CMDS[@]} > 0 )); then
   print -P "%F{red}❌ MANCANO DIPENDENZE:%f"
-  for m in $missing; do print " - $m"; done
+  for m in $MISSING_CMDS; do print " - $m"; done
 
   vared -p "Vuoi installarle ora con Homebrew? [s/n] " choice
 
@@ -34,13 +33,13 @@ ensure_dependencies() {
       print -P "%F{cyan}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"%f"
       exit 1
     fi
-    for m in $missing; do
+    for m in $MISSING_CMDS; do
       brew install "$m"
     done
   else
     exit 1
   fi
-}
+fi
 
 
 
@@ -49,27 +48,35 @@ ensure_dependencies() {
 ########################################
 
 # 4K PRESET (VideoToolbox Quality Mode)
-# HandBrake CQ 60 ≈ ffmpeg -q:v 60
 typeset -a PRESET_4K_VIDEO_OPTS=(
   -c:v hevc_videotoolbox
   -profile:v main10
   -pix_fmt p010le
   -vsync vfr
+  -color_range tv
+  -color_primaries bt2020
+  -color_trc smpte2084
+  -colorspace bt2020nc
   -q:v 60
 )
 PRESET_4K_AUDIO_FALLBACK_BITRATE="320k"
 typeset -a PASSTHROUGH_CODECS_4K=( aac ac3 eac3 dtshd dts mp3 opus truehd flac )
+
 
 # 1080p PRESET (VideoToolbox Quality Mode)
 typeset -a PRESET_1080_VIDEO_OPTS=(
   -c:v hevc_videotoolbox
   -profile:v main10
   -pix_fmt p010le
+  -vsync vfr
+  -color_range tv
+  -color_primaries bt709
+  -color_trc bt709
+  -colorspace bt709
   -q:v 60
 )
 PRESET_1080_AUDIO_FALLBACK_BITRATE="256k"
 typeset -a PASSTHROUGH_CODECS_1080P=( aac ac3 eac3 dtshd dts mp3 truehd )
-
 
 ########################################
 # 3) Utility
@@ -91,8 +98,8 @@ choose_preset() {
     print -P "%F{green}=== MEDIAENC ===%f"
     print ""
     print "Seleziona preset:"
-    print " [1] 4K (HDR x265 10bit - Quality )"
-    print " [2] 1080p (SDR x265 10bit - Quality )"
+    print " [1] 4K (HDR x265 10bit - Quality 60)"
+    print " [2] 1080p (SDR x265 10bit - Quality 60)"
     print " [q] Esci"
     vared -p "Scelta: " choice
 
@@ -187,124 +194,12 @@ collect_video_files() {
 
 get_file_json() {
   local file="$1"
-  ffprobe -v quiet -print_format json -show_streams -show_format "$file"
+  ffprobe -v quiet -print_format json -show_streams "$file"
 }
 
 
 ########################################
-# 8) Rilevazione automatica spazio colore
-########################################
-
-COLOR_PROFILE_LABEL=""
-typeset -a COLOR_FLAGS
-
-determine_color_flags() {
-  local json="$1"
-
-  local color_line
-  color_line="$(echo "$json" | jq -r '
-    (.streams[] | select(.codec_type=="video") |
-     [(.color_primaries // ""), (.color_transfer // ""), (.color_space // ""), (.color_range // ""), (.hdr_format // "")])
-    | @tsv
-  ' | head -n1)"
-
-  local -a parts
-  parts=("${(@s:\t:)color_line}")
-
-  local primaries="${parts[1]:-}"
-  local transfer="${parts[2]:-}"
-  local space="${parts[3]:-}"
-  local range="${parts[4]:-}"
-  local hdr="${parts[5]:-}"
-
-  local hdr_l="${hdr:l}"
-
-  if [[ "$hdr_l" == *"dolby_vision"* ]]; then
-    COLOR_PROFILE_LABEL="Dolby Vision"
-    primaries="${primaries:-bt2020}"
-    transfer="${transfer:-smpte2084}"
-    space="${space:-bt2020nc}"
-  elif [[ "$transfer" == "arib-std-b67" || "$hdr_l" == *"hlg"* ]]; then
-    COLOR_PROFILE_LABEL="HLG"
-    primaries="${primaries:-bt2020}"
-    transfer="arib-std-b67"
-    space="${space:-bt2020nc}"
-  elif [[ "$transfer" == "smpte2084" || "$hdr_l" == *"hdr10"* ]]; then
-    COLOR_PROFILE_LABEL="HDR10"
-    primaries="${primaries:-bt2020}"
-    transfer="smpte2084"
-    space="${space:-bt2020nc}"
-  else
-    COLOR_PROFILE_LABEL="SDR"
-    primaries="${primaries:-bt709}"
-    transfer="${transfer:-bt709}"
-    space="${space:-bt709}"
-  fi
-
-  [[ -z "$range" ]] && range="tv"
-
-  COLOR_FLAGS=(
-    -color_range "$range"
-    -color_primaries "$primaries"
-    -color_trc "$transfer"
-    -colorspace "$space"
-  )
-}
-
-
-########################################
-# 9) Monitoraggio ffmpeg
-########################################
-
-run_ffmpeg_with_progress() {
-  local duration="$1"
-  shift
-
-  local -a cmd=( "$@" -hide_banner -loglevel error -nostats -progress pipe:1 )
-  local -F duration_f=${duration:-0}
-  local -F out_sec=0
-  local -F progress=0
-  local -F speed_val=0
-  local -F eta_sec=0
-  local eta_str="--:--"
-  local bitrate="?"
-  local speed="?"
-
-  {
-    "${cmd[@]}" | while IFS='=' read -r key value; do
-      case "$key" in
-        out_time_ms)
-          (( out_sec = value / 1000000.0 ))
-          (( progress = duration_f > 0 ? (out_sec / duration_f) * 100 : 0 ))
-          ;;
-        bitrate)
-          bitrate="$value"
-          ;;
-        speed)
-          speed="$value"
-          speed_val="${speed%x}"
-          ;;
-      esac
-
-      eta_str="--:--"
-      if (( duration_f > 0 && speed_val > 0 )); then
-        (( eta_sec = (duration_f - out_sec) / speed_val ))
-        eta_str=$(printf "%02d:%02d" $(( eta_sec / 60 )) $(( eta_sec % 60 )))
-      fi
-
-      printf "\rProgress: %5.1f%% | ETA: %s | Bitrate: %s | Speed: %s" \
-        "$progress" "$eta_str" "$bitrate" "$speed"
-    done
-  }
-
-  local status=${pipestatus[1]:-1}
-  print ""
-  return $status
-}
-
-
-########################################
-# 10) Scelta tracce (ROBUSTA)
+# 8) Scelta tracce (ROBUSTA)
 ########################################
 
 typeset -A AUDIO_STREAMS_SELECTED
@@ -412,7 +307,7 @@ interactive_track_selection() {
 
 
 ########################################
-# 11) Build comando ffmpeg (CLEAN)
+# 9) Build comando ffmpeg (CLEAN)
 ########################################
 
 # Questa funzione costruisce l'array CMD globale
@@ -424,13 +319,11 @@ build_ffmpeg_command_for_file() {
 
   # Reimposta l'array globale CMD
   typeset -ga CMD
-  CMD=( ffmpeg -y -i "$file" -map_metadata 0 -map_chapters 0 )
+  CMD=( ffmpeg -y -i "$file" )
 
   # --- VIDEO ---
   CMD+=( -map 0:v:0 )
   CMD+=( "${PRESET_VIDEO_OPTS[@]}" )
-  determine_color_flags "$json"
-  CMD+=( "${COLOR_FLAGS[@]}" )
 
   # --- AUDIO ---
   local sel_str="${AUDIO_STREAMS_SELECTED[$idx]:-}"
@@ -483,17 +376,14 @@ build_ffmpeg_command_for_file() {
 
 
 ########################################
-# 12) LOOP + conferma finale (FIXED OUTPUT DIR)
+# 10) LOOP + conferma finale (FIXED OUTPUT DIR)
 ########################################
 
 run_encoding_loop() {
   local file idx base outdir outfile
-
+  
   # Usiamo una mappa solo per i percorsi di output (stringhe semplici)
   typeset -A OUTPUT_FILES_MAP
-  typeset -A COLOR_PROFILE_MAP
-  typeset -A FILE_JSON_MAP
-  typeset -A DURATION_MAP
 
   # ------------------------------------
   # PHASE 1: PREPARAZIONE E RIEPILOGO
@@ -508,28 +398,24 @@ run_encoding_loop() {
     local json
     json="$(get_file_json "$file")"
     FILE_JSON="$json"
-    FILE_JSON_MAP[$idx]="$json"
-    DURATION_MAP[$idx]="$(echo "$json" | jq -r '.format.duration // 0')"
 
     interactive_track_selection "$idx" "$json" "audio"
     print ""
     interactive_track_selection "$idx" "$json" "subtitle"
 
-    # --- PATH OUTPUT FORZATO ---
-    outdir="${HOME}/Movies"
-    mkdir -p "$outdir"
+    # --- MODIFICA PATH OUTPUT ---
+    outdir="/Users/gianluca/Movies"
+    mkdir -p "$outdir" # Crea la cartella se non esiste
 
     base="${file:t}"
     base="${base%.*}"
     outfile="${outdir}/${base}_enc_${PRESET_NAME}.mkv"
 
     OUTPUT_FILES_MAP[$idx]="$outfile"
-
+    
     # Costruiamo il comando qui SOLO per verificare che non ci siano errori
+    # e volendo per stamparlo a video, ma NON lo salviamo per l'esecuzione.
     build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
-
-    # Salva il profilo colore rilevato per riepilogo
-    COLOR_PROFILE_MAP[$idx]="$COLOR_PROFILE_LABEL"
   done
 
   clear
@@ -544,9 +430,6 @@ run_encoding_loop() {
     local aud="${AUDIO_STREAMS_SELECTED[$idx]:-}"
     [[ -z "$aud" ]] && aud="(nessuno)"
     print -P "%F{cyan}  Audio IDs:%f  $aud"
-
-    local color_profile="${COLOR_PROFILE_MAP[$idx]:-SDR}"
-    print -P "%F{cyan}  Colore:%f    $color_profile"
 
     local sub="${SUB_STREAMS_SELECTED[$idx]:-}"
     [[ -z "$sub" ]] && sub="(nessuno)"
@@ -574,21 +457,16 @@ run_encoding_loop() {
     print "$file"
     print ""
 
-    # 1. Recupera il JSON salvato
+    # 1. Recupera di nuovo il JSON
     local json
-    json="${FILE_JSON_MAP[$idx]}"
+    json="$(get_file_json "$file")"
     FILE_JSON="$json"
 
     # 2. RICOSTRUISCE IL COMANDO AL VOLO
     build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
 
-    print_info "Spazio colore rilevato: $COLOR_PROFILE_LABEL"
-
-    # 3. ESEGUE CON BARRA DI AVANZAMENTO
-    local duration
-    duration="${DURATION_MAP[$idx]:-0}"
-
-    run_ffmpeg_with_progress "$duration" "${CMD[@]}"
+    # 3. ESEGUE DIRETTAMENTE
+    "${CMD[@]}"
 
     print -P "%F{green}✓ Completato:%f $outfile"
     print ""
@@ -599,14 +477,14 @@ run_encoding_loop() {
 
 
 ########################################
-# 13) MAIN
+# 11) MAIN
 ########################################
 
 main() {
-  ensure_dependencies
   choose_preset
   ask_input_path
   collect_video_files
   run_encoding_loop
 }
+
 main "$@"
