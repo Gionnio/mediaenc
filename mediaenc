@@ -198,6 +198,38 @@ get_file_json() {
 COLOR_PROFILE_LABEL=""
 typeset -a COLOR_FLAGS
 
+
+########################################
+# 8-bis) Rilevazione bande nere
+########################################
+
+detect_crop_filter() {
+  local file="$1"
+  local duration="$2"
+
+  local -F duration_f=${duration:-0}
+  local -F start_sec=0
+  if (( duration_f > 0 )); then
+    (( start_sec = duration_f / 2 ))
+  fi
+
+  local start_ts
+  start_ts=$(printf '%02d:%02d:%02d' $(( start_sec / 3600 )) $(((start_sec % 3600) / 60)) $(( start_sec % 60 )))
+
+  local ff_out
+  ff_out=$(ffmpeg -hide_banner -loglevel info -ss "$start_ts" -i "$file" \
+    -frames:v 120 -map 0:v:0 -an -sn -vf cropdetect=24:16:0 -f null - 2>&1 || true)
+
+  local crop_line
+  crop_line=$(echo "$ff_out" | grep -o 'crop=[0-9:]*' | tail -n1)
+
+  if [[ -n "$crop_line" ]]; then
+    echo "${crop_line#crop=}"
+  else
+    echo ""
+  fi
+}
+
 determine_color_flags() {
   local json="$1"
 
@@ -432,6 +464,20 @@ build_ffmpeg_command_for_file() {
   determine_color_flags "$json"
   CMD+=( "${COLOR_FLAGS[@]}" )
 
+  local -a vf_filters
+  if [[ -n "${CROP_FILTER:-}" ]]; then
+    vf_filters+=( "crop=${CROP_FILTER}" )
+  fi
+
+  if (( ${#vf_filters[@]} > 0 )); then
+    local vf_chain="${vf_filters[1]}"
+    local f
+    for f in ${vf_filters[@]:1}; do
+      vf_chain+=",$f"
+    done
+    CMD+=( -vf "$vf_chain" )
+  fi
+
   # --- AUDIO ---
   local sel_str="${AUDIO_STREAMS_SELECTED[$idx]:-}"
   typeset -a sel_indices
@@ -492,6 +538,7 @@ run_encoding_loop() {
   # Usiamo una mappa solo per i percorsi di output (stringhe semplici)
   typeset -A OUTPUT_FILES_MAP
   typeset -A COLOR_PROFILE_MAP
+  typeset -A CROP_FILTER_MAP
   typeset -A FILE_JSON_MAP
   typeset -A DURATION_MAP
 
@@ -511,6 +558,8 @@ run_encoding_loop() {
     FILE_JSON_MAP[$idx]="$json"
     DURATION_MAP[$idx]="$(echo "$json" | jq -r '.format.duration // 0')"
 
+    CROP_FILTER_MAP[$idx]="$(detect_crop_filter "$file" "${DURATION_MAP[$idx]}")"
+
     interactive_track_selection "$idx" "$json" "audio"
     print ""
     interactive_track_selection "$idx" "$json" "subtitle"
@@ -526,6 +575,7 @@ run_encoding_loop() {
     OUTPUT_FILES_MAP[$idx]="$outfile"
 
     # Costruiamo il comando qui SOLO per verificare che non ci siano errori
+    CROP_FILTER="${CROP_FILTER_MAP[$idx]}"
     build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
 
     # Salva il profilo colore rilevato per riepilogo
@@ -547,6 +597,10 @@ run_encoding_loop() {
 
     local color_profile="${COLOR_PROFILE_MAP[$idx]:-SDR}"
     print -P "%F{cyan}  Colore:%f    $color_profile"
+
+    local crop_filter="${CROP_FILTER_MAP[$idx]:-}"
+    [[ -z "$crop_filter" ]] && crop_filter="(nessun crop rilevato)"
+    print -P "%F{cyan}  Crop:%f      $crop_filter"
 
     local sub="${SUB_STREAMS_SELECTED[$idx]:-}"
     [[ -z "$sub" ]] && sub="(nessuno)"
@@ -578,6 +632,8 @@ run_encoding_loop() {
     local json
     json="${FILE_JSON_MAP[$idx]}"
     FILE_JSON="$json"
+
+    CROP_FILTER="${CROP_FILTER_MAP[$idx]}"
 
     # 2. RICOSTRUISCE IL COMANDO AL VOLO
     build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
