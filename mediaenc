@@ -84,6 +84,11 @@ typeset -a PRESET_1080_VIDEO_OPTS=(
 PRESET_1080_AUDIO_FALLBACK_BITRATE="256k"
 typeset -a PASSTHROUGH_CODECS_1080P=( aac ac3 eac3 dtshd dts mp3 truehd )
 
+# VIDEO FILTER OPTIONS
+typeset -A VIDEO_FILTER_MAP
+typeset -A CROP_RESULTS
+AUTO_CROP=0
+
 
 ########################################
 # 3) Utility
@@ -92,6 +97,18 @@ typeset -a PASSTHROUGH_CODECS_1080P=( aac ac3 eac3 dtshd dts mp3 truehd )
 print_error() { print -P "%F{red}[ERRORE]%f $*"; }
 print_ok()    { print -P "%F{green}[OK]%f $*"; }
 print_info()  { print -P "%F{cyan}[INFO]%f $*"; }
+
+
+ask_video_options() {
+  print ""
+  vared -p "Rilevare e tagliare automaticamente le bande nere? [s/N] " choice
+  if [[ "$choice" == [sS] ]]; then
+    AUTO_CROP=1
+    print_ok "Auto-crop attivo (analisi rapida dei primi fotogrammi)."
+  else
+    AUTO_CROP=0
+  fi
+}
 
 
 ########################################
@@ -256,6 +273,50 @@ run_ffmpeg_with_progress() {
 }
 
 
+detect_crop_for_file() {
+  local file="$1"
+  local crop_line
+
+  crop_line="$(
+    ffmpeg -v error -i "$file" -filter:v "cropdetect=24:16:0" -frames:v 120 -f null - 2>&1 \
+      | grep -oE "crop=[0-9]+:[0-9]+:[0-9]+:[0-9]+" \
+      | tail -n1
+  )" || true
+
+  echo "$crop_line"
+}
+
+
+describe_streams() {
+  local json="$1"
+  local indices_str="$2"
+  local type="$3"
+
+  typeset -a indices
+  indices=(${=indices_str})
+  (( ${#indices[@]} == 0 )) && { echo "(nessuno)"; return; }
+
+  typeset -a descs
+  local idx info
+  for idx in "${indices[@]}"; do
+    if [[ "$type" == "audio" ]]; then
+      info="$(echo "$json" | jq -r --arg i "$idx" '
+        .streams[] | select(.index == ($i|tonumber))
+        | "\(.tags.language // \"und\") \(.codec_name) \(.channels // 0)ch"
+      ')"
+    else
+      info="$(echo "$json" | jq -r --arg i "$idx" '
+        .streams[] | select(.index == ($i|tonumber))
+        | "\(.tags.language // \"und\") \(.codec_name)"
+      ')"
+    fi
+    descs+=("#$idx ($info)")
+  done
+
+  echo "${(j:, :)descs}"
+}
+
+
 ########################################
 # 9) Scelta tracce (ROBUSTA)
 ########################################
@@ -368,6 +429,23 @@ interactive_track_selection() {
 # 10) Build comando ffmpeg (CLEAN)
 ########################################
 
+prepare_video_filters_for_file() {
+  local idx="$1"
+  local file="$2"
+
+  typeset -a filters
+  filters=()
+
+  if (( AUTO_CROP == 1 )); then
+    local crop_val="${CROP_RESULTS[$idx]:-}"
+    [[ -z "$crop_val" ]] && crop_val="$(detect_crop_for_file "$file")" && CROP_RESULTS[$idx]="$crop_val"
+    [[ -n "$crop_val" ]] && filters+=("$crop_val")
+  fi
+
+  VIDEO_FILTER_MAP[$idx]="${(j:,:)filters}"
+}
+
+
 # Questa funzione costruisce l'array CMD globale
 build_ffmpeg_command_for_file() {
   local idx="$1"
@@ -382,6 +460,9 @@ build_ffmpeg_command_for_file() {
   # --- VIDEO ---
   CMD+=( -map 0:v:0 )
   CMD+=( "${PRESET_VIDEO_OPTS[@]}" )
+
+  local filter_chain="${VIDEO_FILTER_MAP[$idx]:-}"
+  [[ -n "$filter_chain" ]] && CMD+=( -vf "$filter_chain" )
 
   # --- AUDIO ---
   local sel_str="${AUDIO_STREAMS_SELECTED[$idx]:-}"
@@ -465,6 +546,8 @@ run_encoding_loop() {
     print ""
     interactive_track_selection "$idx" "$json" "subtitle"
 
+    prepare_video_filters_for_file "$idx" "$file"
+
     # --- PATH OUTPUT FORZATO ---
     outdir="${HOME}/Movies"
     mkdir -p "$outdir"
@@ -485,16 +568,19 @@ run_encoding_loop() {
 
   for idx in {1..${#FILE_LIST[@]}}; do
     file="${FILE_LIST[$idx]}"
-    print -P "%F{cyan}→ Input:%f $file"
-    print -P "%F{cyan}  Output:%f ${OUTPUT_FILES_MAP[$idx]:-}"
-    
-    local aud="${AUDIO_STREAMS_SELECTED[$idx]:-}"
-    [[ -z "$aud" ]] && aud="(nessuno)"
-    print -P "%F{cyan}  Audio IDs:%f  $aud"
+    print -P "%F{cyan}→ Input:%f   $file"
+    print -P "%F{cyan}  Output:%f  ${OUTPUT_FILES_MAP[$idx]:-}"
+    print -P "%F{cyan}  Preset:%f  $PRESET_NAME"
 
-    local sub="${SUB_STREAMS_SELECTED[$idx]:-}"
-    [[ -z "$sub" ]] && sub="(nessuno)"
-    print -P "%F{cyan}  Sub IDs:%f    $sub"
+    local filter_chain="${VIDEO_FILTER_MAP[$idx]:-}"
+    [[ -z "$filter_chain" ]] && filter_chain="(nessuno)"
+    print -P "%F{cyan}  Video:%f   $filter_chain"
+
+    local aud="$(describe_streams "${FILE_JSON_MAP[$idx]}" "${AUDIO_STREAMS_SELECTED[$idx]:-}" "audio")"
+    print -P "%F{cyan}  Audio:%f   $aud"
+
+    local sub="$(describe_streams "${FILE_JSON_MAP[$idx]}" "${SUB_STREAMS_SELECTED[$idx]:-}" "subtitle")"
+    print -P "%F{cyan}  Sub:%f     $sub"
     print ""
   done
 
@@ -512,10 +598,22 @@ run_encoding_loop() {
   for idx in {1..${#FILE_LIST[@]}}; do
     file="${FILE_LIST[$idx]}"
     outfile="${OUTPUT_FILES_MAP[$idx]}"
-    
+
     print -P "%F{yellow}==============================%f"
     print "Encoding File #$idx:"
     print "$file"
+    print ""
+    print_info "Preset: $PRESET_NAME"
+
+    local filter_chain="${VIDEO_FILTER_MAP[$idx]:-}"
+    [[ -z "$filter_chain" ]] && filter_chain="(nessuno)"
+    print_info "Filtri video: $filter_chain"
+
+    local aud_desc="$(describe_streams "${FILE_JSON_MAP[$idx]}" "${AUDIO_STREAMS_SELECTED[$idx]:-}" "audio")"
+    print_info "Audio: $aud_desc"
+
+    local sub_desc="$(describe_streams "${FILE_JSON_MAP[$idx]}" "${SUB_STREAMS_SELECTED[$idx]:-}" "subtitle")"
+    print_info "Sub: $sub_desc"
     print ""
 
     # 1. Recupera il JSON salvato
@@ -547,6 +645,7 @@ run_encoding_loop() {
 main() {
   ensure_dependencies
   choose_preset
+  ask_video_options
   ask_input_path
   collect_video_files
   run_encoding_loop
