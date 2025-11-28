@@ -88,6 +88,65 @@ print_info()  { print -P "%F{cyan}[INFO]%f $*"; }
 
 
 ########################################
+# Progress bar utilities
+########################################
+
+get_duration_ms() {
+  local file="$1"
+  local duration
+
+  duration="$(
+    ffprobe -v error -select_streams v:0 \
+      -show_entries format=duration \
+      -of default=nokey=1:noprint_wrappers=1 "$file" | head -n1
+  )"
+
+  if [[ -z "$duration" ]]; then
+    printf "%d" 0
+  else
+    printf "%d" "$(printf "%s" "$duration" | awk '{ printf("%d", $1 * 1000) }')"
+  fi
+}
+
+run_ffmpeg_with_progress() {
+  local duration_ms="$1"; shift
+  local -a cmd=("$@")
+  local bar_width=40
+  local last_pct=-1
+
+  if (( duration_ms <= 0 )); then
+    "${cmd[@]}"
+    return
+  fi
+
+  "${cmd[@]}" | while IFS='=' read -r key value; do
+    if [[ "$key" == "out_time_ms" ]]; then
+      local pct=$(( value * 100 / duration_ms ))
+      (( pct > 100 )) && pct=100
+
+      if (( pct != last_pct )); then
+        local filled=$(( pct * bar_width / 100 ))
+        local bar=""
+
+        for ((i=0; i<filled; i++)); do bar+="="; done
+        for ((i=filled; i<bar_width; i++)); do bar+=" "; done
+
+        printf "\r[%s] %3d%%" "$bar" "$pct"
+        last_pct=$pct
+      fi
+    elif [[ "$key" == "progress" && "$value" == "end" ]]; then
+      local bar_full=""
+      for ((i=0; i<bar_width; i++)); do bar_full+="="; done
+      printf "\r[%s] 100%%\n" "$bar_full"
+    fi
+  done
+
+  local -a ps=(${pipestatus[@]-})
+  return ${ps[1]:-0}
+}
+
+
+########################################
 # 4) Selezione preset
 ########################################
 
@@ -465,8 +524,14 @@ run_encoding_loop() {
     # 2. RICOSTRUISCE IL COMANDO AL VOLO
     build_ffmpeg_command_for_file "$idx" "$file" "$outfile"
 
-    # 3. ESEGUE DIRETTAMENTE
-    "${CMD[@]}"
+    # 3. ESEGUE DIRETTAMENTE CON PROGRESS BAR
+    local duration_ms
+    duration_ms="$(get_duration_ms "$file")"
+
+    typeset -a CMD_WITH_PROGRESS
+    CMD_WITH_PROGRESS=("${CMD[@]}" -progress pipe:1 -nostats -loglevel error)
+
+    run_ffmpeg_with_progress "$duration_ms" "${CMD_WITH_PROGRESS[@]}"
 
     print -P "%F{green}✓ Completato:%f $outfile"
     print ""
