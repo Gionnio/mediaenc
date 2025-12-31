@@ -4,6 +4,8 @@
 ![Platform](https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white)
 ![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-orange?style=for-the-badge)
+![Views](https://komarev.com/ghpvc/?username=gionnio-mediaenc&style=for-the-badge&label=VIEWS&color=7F00FF)
+![Downloads](https://img.shields.io/github/downloads/gionnio/mediaenc/total?style=for-the-badge&color=success)
 ![AI](https://img.shields.io/badge/AI-Assisted-blueviolet?style=for-the-badge&logo=openai&logoColor=white)
 
 **Mediaenc** is a professional-grade, terminal-based video encoding automation tool developed in Python, optimized for **Apple Silicon (M1/M2/M3)**. It wraps FFmpeg with a smart, interactive UI to handle complex workflows like Batch Encoding, Quality Benchmarking, and Smart Audio handling.
