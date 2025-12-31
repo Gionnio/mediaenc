@@ -1,23 +1,30 @@
-# 🎬 MEDIAENC – Ultimate Encoding Suite
+# Mediaenc 🎞️
 
-**Mediaenc** is a custom-built, command-line video encoding automation tool tailored for **macOS (Apple Silicon)**. 
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white)
+![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)
+![License](https://img.shields.io/github/license/gionnio/mediaenc?style=for-the-badge)
+![AI](https://img.shields.io/badge/AI-Assisted-blueviolet?style=for-the-badge&logo=openai&logoColor=white)
 
-Developed with the assistance of **Artificial Intelligence**, this suite wraps FFmpeg in an interactive, user-friendly interface designed to streamline personal media archiving. It prioritizes the balance between archival quality, storage efficiency, and broad compatibility.
-
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue?style=flat-square) ![Platform](https://img.shields.io/badge/Platform-Apple%20Silicon%20(M1%2FM2%2FM3)-lightgrey?style=flat-square) ![FFmpeg](https://img.shields.io/badge/Backend-FFmpeg-green?style=flat-square) ![License](https://img.shields.io/badge/License-MIT-orange?style=flat-square)
+**Mediaenc** is a professional-grade, terminal-based video encoding automation tool developed in Python, optimized for **Apple Silicon (M1/M2/M3)**. It wraps FFmpeg with a smart, interactive UI to handle complex workflows like Batch Encoding, Quality Benchmarking, and Smart Audio handling.
 
 ![Pixel](https://github.com/user-attachments/assets/9eea1b45-e8d4-4410-8317-cc5daf818913)
 
----
-
 ## ✨ Core Philosophy
-
-This tool was created to solve specific personal archiving needs:
-1.  **Automation:** Detect crop bars, map audio tracks, and handle subtitles automatically.
+This tool was created to solve specific personal archiving needs that standard GUIs often miss:
+1.  **Automation:** Detect crop bars, map audio tracks, and handle subtitles automatically without user intervention per file.
 2.  **Decision Making:** A unique **Benchmark Mode** allows testing 45s samples with different presets to compare **VMAF**, **SSIM**, and **Efficiency (Quality/GB)** before committing to a full encode.
 3.  **Control:** Granular control over audio strategies and video quality without memorizing complex FFmpeg flags.
 
-## ⚙️ The Presets
+## 🚀 Features
+- **Optimized Presets:** Includes specialized modes for GPU Speed (VideoToolbox), CPU Archival (x265), and High-Bitrate Streaming.
+- **Smart Audio Logic:** Automatically detects audio types. Copies efficient tracks (AC3/EAC3) and converts lossless ones (TrueHD/DTS) to **EAC3** preserving 7.1 channels.
+- **Triathlon Benchmark:** Runs 45s test encodes comparing **VMAF**, **SSIM**, and **Efficiency** (Quality/GB) before the full job.
+- **Scientific Quality Check:** Compares the encoded file against the source using objective metrics, handling resolution and bit-depth mismatches automatically.
+- **Auto-Crop Detection:** Analyzes multiple frames to detect and remove black bars automatically.
+- **Detailed Reporting:** Provides a summary of space saved (GB and %) after every job.
+
+## ⚙️ Presets Overview
 
 The suite includes 4 highly tuned presets designed for specific use cases:
 
@@ -35,37 +42,33 @@ The suite includes 4 highly tuned presets designed for specific use cases:
 One of the key features of Mediaenc is its **Hierarchical Audio Logic**.
 When starting an encode, you choose a *Strategy* that overrides individual codec settings.
 
-### The Logic Matrix
-
 | Strategy Choice | Input is AC3/EAC3 | Input is Lossless (TrueHD/DTS-HD/PCM) | Goal |
 | :--- | :--- | :--- | :--- |
 | **[1] Passthrough** | **COPY** | **COPY** | Keeps the original audio bit-perfect (Filesize: Large). |
 | **[2] Smart Surround** | **COPY** | **CONVERT to EAC3** | **The Smart Choice.** Keeps native compressed audio. Converts heavy lossless tracks to **EAC3 (Dolby Digital Plus)**. <br> *Key Feature:* Preserves **7.1 channels** if present. |
 | **[3] Stereo Saver** | **CONVERT** | **CONVERT** | Downmixes everything to efficient **AAC 2.0**. |
 
-## 🛠 Features Overview
+## 🚀 Requirements
+- macOS 12.0 (Monterey) or later (Optimized for Apple Silicon).
+- **FFmpeg** installed (via Homebrew).
 
-* **Benchmark "Triathlon":** Runs a 45s test encode on a central chunk of the video (ignoring crop to avoid metric mismatches) and calculates **VMAF**, **SSIM**, and **File Size projection**.
-* **Auto-Crop Detection:** Analyzes multiple frames to detect black bars and applies crop filters automatically.
-* **Bit-Depth Awareness:** Automatically handles 8-bit vs 10-bit metric comparisons to prevent calculation errors.
-* **Detailed Reporting:** Provides a summary of space saved (GB and %) after every job.
-
-## 📥 Installation
-
-1.  **Prerequisites:** Ensure you have FFmpeg installed.
+## 🛠 Setup
+1.  Install FFmpeg:
     ```bash
     brew install ffmpeg
     ```
-2.  **Install:**
-    Run the provided `install.sh` script or manually copy the file:
+2.  Download the project.
+3.  Run the installation script:
     ```bash
-    sudo cp mediaenc.py /usr/local/bin/mediaenc
-    sudo chmod +x /usr/local/bin/mediaenc
+    sudo ./install.sh
+    ```
+4.  Run the tool from any folder:
+    ```bash
+    mediaenc
     ```
 
-## 🚀 Usage
+## 🤖 AI Acknowledgment
+This application was developed with the assistance of Artificial Intelligence for code generation, logic optimization, and problem-solving.
 
-Simply type `mediaenc` in your terminal from the folder containing your media files.
-
-```bash
-mediaenc
+---
+Created with AI, ❤️ and Python.
