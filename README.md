@@ -8,6 +8,7 @@
 
 **Mediaenc** is a professional-grade, terminal-based video encoding automation tool developed in Python, optimized for **Apple Silicon (M1/M2/M3)**. It wraps FFmpeg with a smart, interactive UI to handle complex workflows like Batch Encoding, Quality Benchmarking, and Smart Audio handling.
 
+
 ![Pixel](https://github.com/user-attachments/assets/9eea1b45-e8d4-4410-8317-cc5daf818913)
 
 ## ✨ Core Philosophy
