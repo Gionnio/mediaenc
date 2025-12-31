@@ -10,25 +10,43 @@
 
 ![Pixel](https://github.com/user-attachments/assets/9eea1b45-e8d4-4410-8317-cc5daf818913)
 
-## ✨ Features
+## ✨ Core Philosophy
+This tool was created to solve specific personal archiving needs that standard GUIs often miss:
+1.  **Automation:** Detect crop bars, map audio tracks, and handle subtitles automatically without user intervention per file.
+2.  **Decision Making:** A unique **Benchmark Mode** allows testing 45s samples with different presets to compare **VMAF**, **SSIM**, and **Efficiency (Quality/GB)** before committing to a full encode.
+3.  **Control:** Granular control over audio strategies and video quality without memorizing complex FFmpeg flags.
 
-* **🚀 Optimized Presets:**
-    * **4K/1080p VideoToolbox:** Blazing fast GPU encoding (Main10, CQ 65).
-    * **4K CPU Universal:** x265 Software (CRF 18) for archival grain preservation.
-    * **High Bitrate VBR:** Variable bitrate targeting high quality standards (24-35 Mbps).
-* **🧠 Smart Audio Logic:**
-    * **Passthrough:** Keeps original Dolby Atmos/TrueHD.
-    * **Smart Surround:** Converts DTS/TrueHD to **EAC3 (Dolby Digital Plus)** while preserving 7.1 channels.
-    * **Stereo Saver:** High-efficiency AAC 2.0 downmix.
-* **🏆 The "Triathlon" Benchmark:**
-    * Test multiple presets on a 45s sample before encoding the whole movie.
-    * Calculates **VMAF** and **SSIM** scores.
-    * Shows **Efficiency** (Quality points per GB) and estimated file size (Video + Audio).
-* **📊 Scientific Quality Check:**
-    * Compare encoded file against source (Reference vs Distorted).
-    * Automatic resolution/bit-depth alignment.
-    * Human-readable verdicts (e.g., "EXCELLENT", "POOR").
-* **✂️ Auto-Crop Detection:** Analyzes the video to detect and remove black bars automatically.
+## 🚀 Features
+- **Optimized Presets:** Includes specialized modes for GPU Speed (VideoToolbox), CPU Archival (x265), and High-Bitrate VBR.
+- **Smart Audio Logic:** Automatically detects audio types. Copies efficient tracks (AC3/EAC3) and converts lossless ones (TrueHD/DTS) to **EAC3** preserving 7.1 channels.
+- **Triathlon Benchmark:** Runs 45s test encodes comparing **VMAF**, **SSIM**, and **Efficiency** (Quality/GB) before the full job.
+- **Scientific Quality Check:** Compares the encoded file against the source using objective metrics, handling resolution and bit-depth mismatches automatically.
+- **Auto-Crop Detection:** Analyzes multiple frames to detect and remove black bars automatically.
+- **Detailed Reporting:** Provides a summary of space saved (GB and %) after every job.
+
+## ⚙️ Presets Overview
+
+The suite includes 4 highly tuned presets designed for specific use cases:
+
+| ID | Name | Type | Target Use Case |
+| :--- | :--- | :--- | :--- |
+| **1** | **4K VideoToolbox (CQ 65)** | GPU | **Speed & Quality.** Uses hardware acceleration with a constant quality factor (CQ 65). Ideal for general 4K archiving. |
+| **2** | **1080p VideoToolbox (CQ 65)** | GPU | **Space Saving.** Downscales 4K content to 1080p while maintaining HDR/10-bit properties. |
+| **3** | **4K CPU x265 (CRF 18)** | CPU | **Archival Master.** Software encoding. Slower but provides the highest fidelity and grain preservation. |
+| **4** | **4K High Bitrate VBR** | GPU | **High Quality VBR.** Targets a high variable bitrate (24-35 Mbps) to mimic high-end digital delivery standards. |
+
+> **Note:** All presets default to **10-bit (Main10)** to prevent color banding and ensure HDR compatibility.
+
+## 🧠 Smart Audio Strategy
+
+One of the key features of Mediaenc is its **Hierarchical Audio Logic**.
+When starting an encode, you choose a *Strategy* that overrides individual codec settings.
+
+| Strategy Choice | Input is AC3/EAC3 | Input is Lossless (TrueHD/DTS-HD/PCM) | Goal |
+| :--- | :--- | :--- | :--- |
+| **[1] Passthrough** | **COPY** | **COPY** | Keeps the original audio bit-perfect (Filesize: Large). |
+| **[2] Smart Surround** | **COPY** | **CONVERT to EAC3** | **The Smart Choice.** Keeps native compressed audio. Converts heavy lossless tracks to **EAC3 (Dolby Digital Plus)**. <br> *Key Feature:* Preserves **7.1 channels** if present. |
+| **[3] Stereo Saver** | **CONVERT** | **CONVERT** | Downmixes everything to efficient **AAC 2.0**. |
 
 ## 🚀 Requirements
 - macOS 12.0 (Monterey) or later (Optimized for Apple Silicon).
@@ -48,25 +66,6 @@
     ```bash
     mediaenc
     ```
-
-## ⚙️ Presets Overview
-
-| ID | Name | Type | Description |
-| :--- | :--- | :--- | :--- |
-| **1** | **4K VideoToolbox (CQ 65)** | GPU | **Speed & Quality.** Hardware acceleration with constant quality. |
-| **2** | **1080p VideoToolbox (CQ 65)** | GPU | **Space Saving.** Downscales to 1080p while maintaining HDR/10-bit. |
-| **3** | **4K CPU x265 (Medium - CRF 18)** | CPU | **Archival Master.** Software encoding for highest fidelity and grain. |
-| **4** | **4K VideoToolbox (VBR 24Mbps)** | GPU | **High Quality.** Targets 24-35 Mbps variable bitrate. |
-
-## 🧠 Smart Audio Strategy
-
-One of the key features of Mediaenc is its **Hierarchical Audio Logic**. When starting an encode, you choose a *Strategy* that overrides individual codec settings.
-
-| Strategy Choice | Input is AC3/EAC3 | Input is Lossless (TrueHD/DTS-HD) | Goal |
-| :--- | :--- | :--- | :--- |
-| **[1] Passthrough** | **COPY** | **COPY** | Keeps the original audio bit-perfect. |
-| **[2] Smart Surround** | **COPY** | **CONVERT to EAC3** | **The Smart Choice.** Converts heavy tracks to **EAC3**, preserving **7.1 channels**. |
-| **[3] Stereo Saver** | **CONVERT** | **CONVERT** | Downmixes everything to efficient **AAC 2.0**. |
 
 ## 🤖 AI Acknowledgment
 This application was developed with the assistance of Artificial Intelligence for code generation, logic optimization, and problem-solving.
