@@ -11,7 +11,7 @@
 ![Pixel](https://github.com/user-attachments/assets/9eea1b45-e8d4-4410-8317-cc5daf818913)
 
 ## ✨ Core Philosophy
-This tool was designed to streamline **personal media library optimization**, solving specific needs that standard GUIs often miss and **eliminating the useless, for me, repetitive steps** required by standard software:
+This tool was born from **personal necessity** to streamline media library optimization. It was designed to **eliminate the repetitive manual configuration steps** that I found unavoidable in standard GUI software:
 1.  **Automation:** Detect crop bars, map audio tracks, and handle subtitles automatically without user intervention per file.
 2.  **Decision Making:** A unique **Benchmark Mode** allows testing 45s samples with different presets to compare **VMAF**, **SSIM**, and **Efficiency (Quality/GB)** before committing to a full encode.
 3.  **Control:** Granular control over audio strategies and video quality without memorizing complex FFmpeg flags.
