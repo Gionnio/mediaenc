@@ -52,7 +52,7 @@ When starting an encode, you choose a *Strategy* that overrides individual codec
 | **[3] Stereo Saver** | **CONVERT** | **CONVERT** | Downmixes everything to efficient **AAC 2.0**. |
 
 ## 🚀 Requirements
-- macOS 12.0 (Monterey) or later (Optimized for Apple Silicon).
+- macOS 12.0 (Monterey) or later.
 - **Python@3.12+** installed.
 - **FFmpeg** installed (via Homebrew).
 
