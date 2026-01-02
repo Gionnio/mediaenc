@@ -53,6 +53,7 @@ When starting an encode, you choose a *Strategy* that overrides individual codec
 
 ## 🚀 Requirements
 - macOS 12.0 (Monterey) or later (Optimized for Apple Silicon).
+- Python@3.12+ installed.
 - **FFmpeg** installed (via Homebrew).
 
 ## 📥 Installation & Setup
