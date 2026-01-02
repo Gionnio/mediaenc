@@ -54,6 +54,24 @@ When starting an encode, you choose a *Strategy* that overrides individual codec
 - macOS 12.0 (Monterey) or later (Optimized for Apple Silicon).
 - **FFmpeg** installed (via Homebrew).
 
+## 📥 Installation
+
+1.  **Prerequisites:** Ensure you have FFmpeg installed.
+    ```bash
+    brew install ffmpeg
+    ```
+2.  **Download the project.**
+3.  **Choose your language:**
+    * **English:** `mediaenc_en.py`
+    * **Italian:** `mediaenc.py`
+4.  **Install:**
+    Manually copy the desired file to your bin folder (rename it to `mediaenc` for easier access):
+    ```bash
+    # For English Version
+    sudo cp mediaenc_en.py /usr/local/bin/mediaenc
+    sudo chmod +x /usr/local/bin/mediaenc
+    ```
+
 ## 🛠 Setup
 1.  Install FFmpeg:
     ```bash
