@@ -14,6 +14,7 @@
 
 ## ✨ Core Philosophy
 This tool was born from **personal necessity** to streamline media library optimization. It was designed to **eliminate the repetitive manual configuration steps** that I found unavoidable in standard GUI software:
+
 1.  **Automation:** Detect crop bars, map audio tracks, and handle subtitles automatically without user intervention per file.
 2.  **Decision Making:** A unique **Benchmark Mode** allows testing 45s samples with different presets to compare **VMAF**, **SSIM**, and **Efficiency (Quality/GB)** before committing to a full encode.
 3.  **Control:** Granular control over audio strategies and video quality without memorizing complex FFmpeg flags.
@@ -34,7 +35,7 @@ The suite includes 4 highly tuned presets designed for specific use cases:
 | :--- | :--- | :--- | :--- |
 | **1** | **4K VideoToolbox (CQ 65)** | GPU | **Speed & Quality.** Uses hardware acceleration with a constant quality factor (CQ 65). Ideal for general 4K archiving. |
 | **2** | **1080p VideoToolbox (CQ 65)** | GPU | **Space Saving.** Downscales 4K content to 1080p while maintaining HDR/10-bit properties. |
-| **3** | **4K CPU x265 (CRF 18)** | CPU | **Archival Master.** Software encoding. Slower but provides the highest fidelity and grain preservation. |
+| **3** | **4K CPU x265 (Medium - CRF 18)** | CPU | **Archival Master.** Software encoding. Slower but provides the highest fidelity and grain preservation. |
 | **4** | **4K High Bitrate VBR** | GPU | **High Quality VBR.** Targets a high variable bitrate (24-35 Mbps) to mimic high-end digital delivery standards. |
 
 > **Note:** All presets default to **10-bit (Main10)** to prevent color banding and ensure HDR compatibility.
@@ -62,22 +63,12 @@ When starting an encode, you choose a *Strategy* that overrides individual codec
     ```
 2.  **Download the project** (Code > Download ZIP or via git).
 3.  **Install the script:**
-    You can use the automated script or copy the file manually.
-
-    **Option A: Automatic (via install script)**
-    ```bash
-    chmod +x install.sh
-    sudo ./install.sh
-    ```
-
-    **Option B: Manual Copy**
-    Choose your preferred language (`mediaenc.py` for Italian, `mediaenc_en.py` for English) and copy it to your bin folder:
+    Choose your preferred language (`mediaenc.py` for Italian, `mediaenc_en.py` for English) and copy it to your bin folder (rename it to `mediaenc` for easier access):
     ```bash
     # Example for English version
     sudo cp mediaenc_en.py /usr/local/bin/mediaenc
     sudo chmod +x /usr/local/bin/mediaenc
     ```
-
 4.  **Run:**
     Simply type `mediaenc` in your terminal from any folder containing your media files.
     ```bash
