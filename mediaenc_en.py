@@ -3,8 +3,8 @@
 
 """
 MEDIAENC - Ultimate Encoding Suite
-Version: 8.9 (Stable)
-Description: Optimized for macOS Apple Silicon.
+Version: 9.2 (International)
+Description: Professional CLI video encoder optimized for macOS Apple Silicon.
 """
 
 import subprocess
@@ -35,6 +35,16 @@ class Colors:
 # CONFIGURATION & PRESETS
 # ============================================================
 PRESETS = {
+    "0": {
+        "id": "0",
+        "name": "Remux (Video Copy - Audio-Sub Only)",
+        "type": "copy",
+        "video_opts": [
+            "-c:v", "copy"
+        ],
+        "audio_bitrate": "320k",
+        "passthrough": ["aac", "ac3", "eac3", "dtshd", "dts", "mp3", "opus", "truehd", "flac"]
+    },
     "1": {
         "id": "1",
         "name": "4K VideoToolbox (CQ 65)",
@@ -93,7 +103,7 @@ PRESETS = {
     },
     "4": {
         "id": "4",
-        "name": "4K VideoToolbox (VBR 24Mbps)",
+        "name": "4K High Bitrate VBR (24Mbps)",
         "type": "gpu",
         "video_opts": [
             "-c:v", "hevc_videotoolbox",
@@ -299,7 +309,7 @@ def format_time(seconds):
 
 def run_ffmpeg_piped(cmd, total_duration):
     full_cmd = cmd + ["-progress", "pipe:1", "-nostats", "-v", "error"]
-    process = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    process = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     
     start_time = time.time()
     out_time_us = 0
@@ -309,6 +319,7 @@ def run_ffmpeg_piped(cmd, total_duration):
     elapsed_str = "00:00:00"
     
     captured_errors = []
+    
     try:
         while True:
             line = process.stdout.readline()
@@ -343,10 +354,11 @@ def run_ffmpeg_piped(cmd, total_duration):
                         bar_str = "#" * int(pct/5) + "." * (20 - int(pct/5))
                         sys.stdout.write(f"\r[{bar_str}] {pct:5.1f}% | Time: {elapsed_str} | ETA: {eta_str} | FPS: {fps:3.0f} | {final_speed:.2f}x")
                         sys.stdout.flush()
-                else:
-                    captured_errors.append(line)
     finally:
         if process.stdout: process.stdout.close()
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            captured_errors.append(stderr_output)
         process.wait()
     
     if process.returncode == 0:
@@ -354,11 +366,13 @@ def run_ffmpeg_piped(cmd, total_duration):
         final_speed = calculated_speed if calculated_speed > 0 else speed_x
         sys.stdout.write(f"\r[{bar_str}] 100.0% | Time: {elapsed_str} | ETA: 00:00:00 | FPS: {fps:3.0f} | {final_speed:.2f}x")
         sys.stdout.flush()
-
-    print()
-    if process.returncode != 0:
+        print()
+        return True
+    else:
+        print(f"\n{Colors.FAIL}❌ FFmpeg Error Log:{Colors.ENDC}")
+        for err in captured_errors:
+            print(err)
         return False
-    return True
 
 # ============================================================
 # METRICS PARSING
@@ -437,16 +451,19 @@ def mode_test_bench():
             print(f"\n{Colors.CYAN}--- Testing: {preset['name']} ---{Colors.ENDC}")
             out_file = input_path.parent / f"bench_res_{preset['name'].replace(' ', '_')}.mkv"
             
-            # --- STEP 2: ENCODING (Using REF as input) ---
             cmd = ["ffmpeg", "-y", "-flags2", "+ignorecrop", "-i", str(ref_file)]
             vf = []
             
-            force_10bit = "p010le" in preset.get("video_opts", [])
-
-            if "1080p" in " ".join(preset.get("video_opts", [])) or "1080p" in preset['name']:
-                 vf.append("scale=1920:-2:flags=lanczos,format=p010le" if force_10bit else "scale=1920:-2:flags=lanczos")
-            elif preset.get('type') == "gpu":
-                 vf.append("format=p010le")
+            is_copy = "-c:v" in preset["video_opts"] and "copy" in preset["video_opts"]
+            
+            if is_copy:
+                pass
+            else:
+                force_10bit = "p010le" in preset.get("video_opts", [])
+                if "1080p" in " ".join(preset.get("video_opts", [])) or "1080p" in preset['name']:
+                     vf.append("scale=1920:-2:flags=lanczos,format=p010le" if force_10bit else "scale=1920:-2:flags=lanczos")
+                elif preset.get('type') == "gpu":
+                     vf.append("format=p010le")
                  
             cmd += ["-map", "0:v:0"]
             cmd += preset["video_opts"]
@@ -465,39 +482,43 @@ def mode_test_bench():
             fps_avg = (45 * 24) / t_elapsed
             
             # --- STEP 3: METRIC CALCULATION ---
-            ref_chain = "[1:v]"
-            if force_10bit: ref_chain += "format=yuv420p10le,"
-            if "1080p" in " ".join(preset.get("video_opts", [])) or "1080p" in preset['name']:
-                ref_chain += "scale=1920:-2:flags=lanczos,"
-            ref_chain = ref_chain.rstrip(",")
-            
-            common_input = ["-flags2", "+ignorecrop", "-i", str(out_file),
-                            "-flags2", "+ignorecrop", "-i", str(ref_file)]
+            if is_copy:
+                score_vmaf = 100.0
+                score_ssim = 1.0000
+            else:
+                ref_chain = "[1:v]"
+                if force_10bit: ref_chain += "format=yuv420p10le,"
+                if "1080p" in " ".join(preset.get("video_opts", [])) or "1080p" in preset['name']:
+                    ref_chain += "scale=1920:-2:flags=lanczos,"
+                ref_chain = ref_chain.rstrip(",")
+                
+                common_input = ["-flags2", "+ignorecrop", "-i", str(out_file),
+                                "-flags2", "+ignorecrop", "-i", str(ref_file)]
 
-            # 2. VMAF
-            print(f"{Colors.BLUE}Calculating VMAF...{Colors.ENDC}")
-            json_vmaf = out_file.with_suffix(".json")
-            vmaf_model = "vmaf_4k_v0.6.1" if "4K" in preset['name'] else "vmaf_v0.6.1"
-            
-            filter_str = f"{ref_chain}[ref];[0:v][ref]libvmaf=model=version={vmaf_model}:n_subsample=10:log_fmt=json:log_path={json_vmaf}"
-            if ref_chain == "[1:v]": filter_str = f"[0:v][1:v]libvmaf=model=version={vmaf_model}:n_subsample=10:log_fmt=json:log_path={json_vmaf}"
-            
-            subprocess.run(["ffmpeg"] + common_input + ["-filter_complex", filter_str, "-f", "null", "-"],
-                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-            
-            score_vmaf = 0
-            if json_vmaf.exists():
-                with open(json_vmaf, 'r') as f:
-                    try: d = json.load(f); score_vmaf = d.get("pooled_metrics", {}).get("vmaf", {}).get("mean", 0)
-                    except: pass
-                os.remove(json_vmaf)
+                # VMAF
+                print(f"{Colors.BLUE}Calculating VMAF...{Colors.ENDC}")
+                json_vmaf = out_file.with_suffix(".json")
+                vmaf_model = "vmaf_4k_v0.6.1" if "4K" in preset['name'] else "vmaf_v0.6.1"
+                
+                filter_str = f"{ref_chain}[ref];[0:v][ref]libvmaf=model=version={vmaf_model}:n_subsample=10:log_fmt=json:log_path={json_vmaf}"
+                if ref_chain == "[1:v]": filter_str = f"[0:v][1:v]libvmaf=model=version={vmaf_model}:n_subsample=10:log_fmt=json:log_path={json_vmaf}"
+                
+                subprocess.run(["ffmpeg"] + common_input + ["-filter_complex", filter_str, "-f", "null", "-"],
+                               stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+                
+                score_vmaf = 0
+                if json_vmaf.exists():
+                    with open(json_vmaf, 'r') as f:
+                        try: d = json.load(f); score_vmaf = d.get("pooled_metrics", {}).get("vmaf", {}).get("mean", 0)
+                        except: pass
+                    os.remove(json_vmaf)
 
-            # 3. SSIM
-            print(f"{Colors.BLUE}Calculating SSIM...{Colors.ENDC}")
-            filter_str_ssim = f"{ref_chain}[ref];[0:v][ref]ssim" if ref_chain != "[1:v]" else "[0:v][1:v]ssim"
-            proc_ssim = subprocess.run(["ffmpeg"] + common_input + ["-filter_complex", filter_str_ssim, "-f", "null", "-"],
-                                       stderr=subprocess.PIPE, text=True)
-            score_ssim = parse_ssim_output(proc_ssim.stderr)
+                # SSIM
+                print(f"{Colors.BLUE}Calculating SSIM...{Colors.ENDC}")
+                filter_str_ssim = f"{ref_chain}[ref];[0:v][ref]ssim" if ref_chain != "[1:v]" else "[0:v][1:v]ssim"
+                proc_ssim = subprocess.run(["ffmpeg"] + common_input + ["-filter_complex", filter_str_ssim, "-f", "null", "-"],
+                                           stderr=subprocess.PIPE, text=True)
+                score_ssim = parse_ssim_output(proc_ssim.stderr)
 
             # SIZE ESTIMATION
             video_size_gb = (out_file.stat().st_size / 45) * duration / (1024**3)
@@ -520,7 +541,7 @@ def mode_test_bench():
 
         if ref_file.exists(): os.remove(ref_file)
 
-        print(f"\n{Colors.HEADER}=== FULL BENCHMARK RESULTS (v8.9) ==={Colors.ENDC}")
+        print(f"\n{Colors.HEADER}=== FULL BENCHMARK RESULTS (v9.2) ==={Colors.ENDC}")
         print(f"{'PRESET':<32} | {'VMAF':<5} | {'RATING':<11} | {'SSIM':<6} | {'EFF':<5} | {'SIZE'}")
         print("-" * 90)
         
@@ -675,7 +696,7 @@ def mode_encode(direct_file=None, direct_preset=None):
 
     current_preset = None
     
-    # 1. Preset Selection (Manual or Direct)
+    # 1. Preset Selection
     if direct_preset:
         current_preset = direct_preset
         print(f"\n{Colors.CYAN}★ Preset selected from Benchmark: {current_preset['name']}{Colors.ENDC}")
@@ -692,7 +713,7 @@ def mode_encode(direct_file=None, direct_preset=None):
         else:
             return
 
-    # 2. File Selection (Manual or Direct)
+    # 2. File Selection
     files = []
     if direct_file:
         files.append(direct_file)
@@ -726,6 +747,12 @@ def mode_encode(direct_file=None, direct_preset=None):
         
         # --- CROP ---
         crop_filter = detect_black_bars(f, duration)
+        
+        is_video_copy = "-c:v" in current_preset["video_opts"] and "copy" in current_preset["video_opts"]
+        if is_video_copy:
+            crop_filter = None
+            print(f"{Colors.BLUE}ℹ️ Remux Mode: Auto-Crop disabled (Video Copy).{Colors.ENDC}")
+        
         if crop_filter:
             print(f"{Colors.GREEN}  → Crop detected: {crop_filter}{Colors.ENDC}")
             confirm = input(f"  Confirm? [y/n] (Enter=Yes, n=Manual, q=Back): ").lower()
@@ -733,7 +760,7 @@ def mode_encode(direct_file=None, direct_preset=None):
             if confirm == 'n':
                 m = input("  Manual Crop (e.g. 3840:1608:0:276) or Enter for NONE: ").strip()
                 crop_filter = f"crop={m}" if m and not m.startswith("crop=") else (m if m else None)
-        else:
+        elif not is_video_copy:
             print(f"{Colors.WARNING}  ⚠️ No auto-crop.{Colors.ENDC}")
             m = input("  Manual Crop or Enter for Original (q=Back): ").strip()
             if m.lower() == 'q': return
@@ -755,7 +782,9 @@ def mode_encode(direct_file=None, direct_preset=None):
         sel_subs = select_tracks(streams, "subtitle")
         if sel_subs is None: return
 
-        outfile = output_dir / f"{f.stem}_enc_{current_preset['name']}.mkv"
+        # FILENAME SANITIZATION
+        safe_preset_name = current_preset['name'].replace("/", "-").replace(":", "-")
+        outfile = output_dir / f"{f.stem}_enc_{safe_preset_name}.mkv"
         
         jobs.append({
             "input": f, "output": outfile, "duration": duration,
@@ -797,25 +826,29 @@ def mode_encode(direct_file=None, direct_preset=None):
         vf_chain = []
         if job['crop']: vf_chain.append(job['crop'])
         
-        is_1080_sdr = (current_preset['name'] == '1080p') or ("1080p" in current_preset['name'])
-        if is_1080_sdr:
-            if job['hdr']:
-                if zscale_available: vf_chain.append("scale=1920:-2,zscale=t=bt709:p=bt709:m=bt709:r=tv,format=p010le")
-                else: vf_chain.append("scale=1920:-2:flags=lanczos,format=p010le")
-            else:
-                vf_chain.append("scale=1920:-2:flags=lanczos,format=p010le")
-        elif current_preset.get('type') == "gpu":
-             vf_chain.append("format=p010le")
+        if is_video_copy:
+            pass
+        else:
+            is_1080_sdr = (current_preset['name'] == '1080p') or ("1080p" in current_preset['name'])
+            if is_1080_sdr:
+                if job['hdr']:
+                    if zscale_available: vf_chain.append("scale=1920:-2,zscale=t=bt709:p=bt709:m=bt709:r=tv,format=p010le")
+                    else: vf_chain.append("scale=1920:-2:flags=lanczos,format=p010le")
+                else:
+                    vf_chain.append("scale=1920:-2:flags=lanczos,format=p010le")
+            elif current_preset.get('type') == "gpu":
+                 vf_chain.append("format=p010le")
 
         cmd += ["-map", "0:v:0"]
         cmd += current_preset["video_opts"]
-        if vf_chain: cmd += ["-vf", ",".join(vf_chain)]
+        
+        if vf_chain and not is_video_copy:
+            cmd += ["-vf", ",".join(vf_chain)]
 
         a_idx = 0
         for track in job['sel_audio']:
             cmd += ["-map", f"0:{track['index']}"]
             
-            # LOGICA AUDIO SMART EAC3
             if job['audio_mode'] == "eac3":
                 if track['codec'] in ['ac3', 'eac3']:
                     cmd += [f"-c:a:{a_idx}", "copy"]
@@ -824,65 +857,5 @@ def mode_encode(direct_file=None, direct_preset=None):
             elif job['audio_mode'] == "aac":
                 cmd += [f"-c:a:{a_idx}", "aac", f"-b:a:{a_idx}", "256k", "-ac", "2"]
             else:
-                # Mode COPY (Default)
                 if track['codec'] in current_preset["passthrough"]:
-                    cmd += [f"-c:a:{a_idx}", "copy"]
-                else:
-                    cmd += [f"-c:a:{a_idx}", "ac3", f"-b:a:{a_idx}", current_preset["audio_bitrate"]]
-            a_idx += 1
-            
-        for track in job['sel_subs']: cmd += ["-map", f"0:{track['index']}"]
-        if job['sel_subs']: cmd += ["-c:s", "copy"]
-            
-        cmd.append(str(job['output']))
-        
-        if run_ffmpeg_piped(cmd, job['duration']):
-            # STATS
-            in_size = job['input'].stat().st_size
-            out_file = Path(str(job['output']))
-            if out_file.exists():
-                out_size = out_file.stat().st_size
-                ratio = (out_size / in_size) * 100
-                diff = in_size - out_size
-                
-                print(f"{Colors.CYAN}📊 FILE STATS:{Colors.ENDC}")
-                print(f"  Original:  {format_size(in_size)}")
-                print(f"  Encoded:   {format_size(out_size)}")
-                print(f"  Ratio:     {ratio:.1f}% (Saved {format_size(diff)})")
-            
-            print(f"{Colors.GREEN}✔ File completed.{Colors.ENDC}")
-        else:
-            print(f"{Colors.FAIL}❌ Error.{Colors.ENDC}")
-            
-        if i < len(jobs) - 1:
-            print("Cooling down 5s..."); time.sleep(5); gc.collect()
-
-# ============================================================
-# MAIN ENTRY POINT
-# ============================================================
-def main():
-    print(f"{Colors.BOLD}=== MEDIAENC – Ultimate Suite v8.9 (Stable) ==={Colors.ENDC}")
-    check_deps()
-    
-    while True:
-        print("\nSelect Mode:")
-        print(f" {Colors.GREEN}[1] ENCODE (CPU/GPU){Colors.ENDC}")
-        print(f" {Colors.CYAN}[2] QUALITY CHECK (VMAF / SSIM){Colors.ENDC}")
-        print(f" {Colors.WARNING}[3] BENCHMARK (Compare Presets){Colors.ENDC}")
-        print(f" [q] Exit")
-        
-        choice = input("> ").strip().lower()
-        
-        if choice == "1":
-            mode_encode()
-        elif choice == "2":
-            mode_quality_check()
-        elif choice == "3":
-            mode_test_bench()
-        elif choice == "q":
-            sys.exit(0)
-        else:
-            print("Invalid choice.")
-
-if __name__ == "__main__":
-    main()
+                    cmd +=
