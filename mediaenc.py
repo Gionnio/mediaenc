@@ -3,8 +3,9 @@
 
 """
 MEDIAENC - Ultimate Encoding Suite
-Version: 9.2
+Version: 9.2.1
 Description: Professional CLI video encoder optimized for macOS Apple Silicon.
+             Changelog 9.2.1: Smarter Audio Logic (No EAC3 bloat for Stereo sources).
 """
 
 import subprocess
@@ -267,15 +268,15 @@ def select_tracks(streams, track_type="audio"):
         lang = tags.get("language", "und").lower()
         title = tags.get("title", "-")
         codec = s.get("codec_name", "unknown")
+        channels = s.get("channels", 2) # Default to 2 if unknown
         
         info = f"[{idx+1}] {lang.upper()} ({codec})"
         if track_type == "audio":
-            ch = s.get("channels", 0)
-            info += f" {ch}ch"
+            info += f" {channels}ch"
         if title != "-":
             info += f" - {title}"
         print(info)
-        map_indices[idx+1] = {"index": real_index, "lang": lang, "codec": codec}
+        map_indices[idx+1] = {"index": real_index, "lang": lang, "codec": codec, "channels": channels}
 
     default_msg = "Default ITA" if track_type == "audio" else "nessuno"
     prompt = f"Scegli tracce (es. 1,3 o Invio per {default_msg}, q=Indietro): "
@@ -431,7 +432,6 @@ def mode_test_bench():
             if s in PRESETS: selected_presets.append(PRESETS[s])
         if not selected_presets: print("Nessun preset valido."); continue
 
-        # --- STEP 1: GENERAZIONE REFERENCE ---
         print(f"\n{Colors.BLUE}Generazione Reference (45s)...{Colors.ENDC}")
         ref_file = input_path.parent / f"bench_ref_{input_path.stem[:10]}.mkv"
         cmd_ref = [
@@ -451,7 +451,6 @@ def mode_test_bench():
             print(f"\n{Colors.CYAN}--- Testing: {preset['name']} ---{Colors.ENDC}")
             out_file = input_path.parent / f"bench_res_{preset['name'].replace(' ', '_')}.mkv"
             
-            # --- STEP 2: ENCODING ---
             cmd = ["ffmpeg", "-y", "-flags2", "+ignorecrop", "-i", str(ref_file)]
             vf = []
             
@@ -482,7 +481,6 @@ def mode_test_bench():
                 
             fps_avg = (45 * 24) / t_elapsed
             
-            # --- STEP 3: METRIC CALCULATION ---
             if is_copy:
                 score_vmaf = 100.0
                 score_ssim = 1.0000
@@ -496,7 +494,6 @@ def mode_test_bench():
                 common_input = ["-flags2", "+ignorecrop", "-i", str(out_file),
                                 "-flags2", "+ignorecrop", "-i", str(ref_file)]
 
-                # VMAF
                 print(f"{Colors.BLUE}Calcolo VMAF...{Colors.ENDC}")
                 json_vmaf = out_file.with_suffix(".json")
                 vmaf_model = "vmaf_4k_v0.6.1" if "4K" in preset['name'] else "vmaf_v0.6.1"
@@ -514,14 +511,12 @@ def mode_test_bench():
                         except: pass
                     os.remove(json_vmaf)
 
-                # SSIM
                 print(f"{Colors.BLUE}Calcolo SSIM...{Colors.ENDC}")
                 filter_str_ssim = f"{ref_chain}[ref];[0:v][ref]ssim" if ref_chain != "[1:v]" else "[0:v][1:v]ssim"
                 proc_ssim = subprocess.run(["ffmpeg"] + common_input + ["-filter_complex", filter_str_ssim, "-f", "null", "-"],
                                            stderr=subprocess.PIPE, text=True)
                 score_ssim = parse_ssim_output(proc_ssim.stderr)
 
-            # SIZE ESTIMATION
             video_size_gb = (out_file.stat().st_size / 45) * duration / (1024**3)
             audio_bitrate_str = preset.get('audio_bitrate', '320k')
             try: audio_kbps = int(audio_bitrate_str.replace('k', ''))
@@ -542,7 +537,7 @@ def mode_test_bench():
 
         if ref_file.exists(): os.remove(ref_file)
 
-        print(f"\n{Colors.HEADER}=== RISULTATI BENCHMARK COMPLETO (v9.2) ==={Colors.ENDC}")
+        print(f"\n{Colors.HEADER}=== RISULTATI BENCHMARK COMPLETO (v9.2.1) ==={Colors.ENDC}")
         print(f"{'PRESET':<32} | {'VMAF':<5} | {'VOTO':<11} | {'SSIM':<6} | {'EFF':<5} | {'SIZE'}")
         print("-" * 90)
         
@@ -697,7 +692,6 @@ def mode_encode(direct_file=None, direct_preset=None):
 
     current_preset = None
     
-    # 1. Preset Selection
     if direct_preset:
         current_preset = direct_preset
         print(f"\n{Colors.CYAN}★ Preset selezionato dal Benchmark: {current_preset['name']}{Colors.ENDC}")
@@ -714,7 +708,6 @@ def mode_encode(direct_file=None, direct_preset=None):
         else:
             return
 
-    # 2. File Selection
     files = []
     if direct_file:
         files.append(direct_file)
@@ -804,12 +797,18 @@ def mode_encode(direct_file=None, direct_preset=None):
         for t in j['sel_audio']:
             action = "COPIA"
             if j['audio_mode'] == "eac3":
-                if t['codec'] in ['ac3', 'eac3']: action = "SMART COPY (Già AC3/EAC3)"
-                else: action = "CONVERTI (EAC3 640k)"
-            elif j['audio_mode'] == "aac": action = "CONVERTI (AAC 2.0)"
-            elif t['codec'] not in current_preset['passthrough']: action = "CONVERTI (Fallback AC3)"
+                if t['codec'] in ['ac3', 'eac3']:
+                    action = "SMART COPY (Già AC3/EAC3)"
+                elif t['channels'] <= 2:
+                    action = "SMART COPY (Stereo/Mono - No Bloat)"
+                else:
+                    action = "CONVERTI (EAC3 640k)"
+            elif j['audio_mode'] == "aac":
+                action = "CONVERTI (AAC 2.0)"
+            elif t['codec'] not in current_preset['passthrough']:
+                action = "CONVERTI (Fallback AC3)"
             
-            print(f"  - [{t['lang'].upper()}] {t['codec']}: {action}")
+            print(f"  - [{t['lang'].upper()}] {t['codec']} ({t['channels']}ch): {action}")
             
         print("Sottotitoli:")
         if not j['sel_subs']:
@@ -853,6 +852,8 @@ def mode_encode(direct_file=None, direct_preset=None):
             if job['audio_mode'] == "eac3":
                 if track['codec'] in ['ac3', 'eac3']:
                     cmd += [f"-c:a:{a_idx}", "copy"]
+                elif track['channels'] <= 2:
+                    cmd += [f"-c:a:{a_idx}", "copy"]
                 else:
                     cmd += [f"-c:a:{a_idx}", "eac3", f"-b:a:{a_idx}", "640k"]
             elif job['audio_mode'] == "aac":
@@ -893,7 +894,7 @@ def mode_encode(direct_file=None, direct_preset=None):
 # MAIN ENTRY POINT
 # ============================================================
 def main():
-    print(f"{Colors.BOLD}=== MEDIAENC – Ultimate Suite v9.2 ==={Colors.ENDC}")
+    print(f"{Colors.BOLD}=== MEDIAENC – Ultimate Suite v9.2.1 ==={Colors.ENDC}")
     check_deps()
     
     while True:

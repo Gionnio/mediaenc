@@ -3,7 +3,7 @@
 
 """
 MEDIAENC - Ultimate Encoding Suite
-Version: 9.2 (International)
+Version: 9.2.1 (International)
 Description: Professional CLI video encoder optimized for macOS Apple Silicon.
 """
 
@@ -267,15 +267,15 @@ def select_tracks(streams, track_type="audio"):
         lang = tags.get("language", "und").lower()
         title = tags.get("title", "-")
         codec = s.get("codec_name", "unknown")
+        channels = s.get("channels", 2)
         
         info = f"[{idx+1}] {lang.upper()} ({codec})"
         if track_type == "audio":
-            ch = s.get("channels", 0)
-            info += f" {ch}ch"
+            info += f" {channels}ch"
         if title != "-":
             info += f" - {title}"
         print(info)
-        map_indices[idx+1] = {"index": real_index, "lang": lang, "codec": codec}
+        map_indices[idx+1] = {"index": real_index, "lang": lang, "codec": codec, "channels": channels}
 
     default_msg = "Default ENG" if track_type == "audio" else "None"
     prompt = f"Choose tracks (e.g. 1,3 or Enter for {default_msg}, q=Back): "
@@ -481,7 +481,6 @@ def mode_test_bench():
                 
             fps_avg = (45 * 24) / t_elapsed
             
-            # --- STEP 3: METRIC CALCULATION ---
             if is_copy:
                 score_vmaf = 100.0
                 score_ssim = 1.0000
@@ -495,7 +494,6 @@ def mode_test_bench():
                 common_input = ["-flags2", "+ignorecrop", "-i", str(out_file),
                                 "-flags2", "+ignorecrop", "-i", str(ref_file)]
 
-                # VMAF
                 print(f"{Colors.BLUE}Calculating VMAF...{Colors.ENDC}")
                 json_vmaf = out_file.with_suffix(".json")
                 vmaf_model = "vmaf_4k_v0.6.1" if "4K" in preset['name'] else "vmaf_v0.6.1"
@@ -513,14 +511,12 @@ def mode_test_bench():
                         except: pass
                     os.remove(json_vmaf)
 
-                # SSIM
                 print(f"{Colors.BLUE}Calculating SSIM...{Colors.ENDC}")
                 filter_str_ssim = f"{ref_chain}[ref];[0:v][ref]ssim" if ref_chain != "[1:v]" else "[0:v][1:v]ssim"
                 proc_ssim = subprocess.run(["ffmpeg"] + common_input + ["-filter_complex", filter_str_ssim, "-f", "null", "-"],
                                            stderr=subprocess.PIPE, text=True)
                 score_ssim = parse_ssim_output(proc_ssim.stderr)
 
-            # SIZE ESTIMATION
             video_size_gb = (out_file.stat().st_size / 45) * duration / (1024**3)
             audio_bitrate_str = preset.get('audio_bitrate', '320k')
             try: audio_kbps = int(audio_bitrate_str.replace('k', ''))
@@ -541,7 +537,7 @@ def mode_test_bench():
 
         if ref_file.exists(): os.remove(ref_file)
 
-        print(f"\n{Colors.HEADER}=== FULL BENCHMARK RESULTS (v9.2) ==={Colors.ENDC}")
+        print(f"\n{Colors.HEADER}=== FULL BENCHMARK RESULTS (v9.2.1) ==={Colors.ENDC}")
         print(f"{'PRESET':<32} | {'VMAF':<5} | {'RATING':<11} | {'SSIM':<6} | {'EFF':<5} | {'SIZE'}")
         print("-" * 90)
         
@@ -583,108 +579,6 @@ def mode_test_bench():
             return
 
 # ============================================================
-# MODE: QUALITY CHECK
-# ============================================================
-def mode_quality_check():
-    print(f"\n{Colors.HEADER}=== VIDEO QUALITY ANALYSIS ==={Colors.ENDC}")
-    
-    print("\n1. Drag REFERENCE file (Original/Remux) (q=Back):")
-    ref_input = input("> ").strip()
-    if ref_input.lower() == 'q': return
-    ref_path = clean_input_path(ref_input)
-    if not os.path.exists(ref_path): print("Invalid file."); return
-
-    print("\n2. Drag DISTORTED file (Encoded) (q=Back):")
-    dist_input = input("> ").strip()
-    if dist_input.lower() == 'q': return
-    dist_path = clean_input_path(dist_input)
-    if not os.path.exists(dist_path): print("Invalid file."); return
-
-    force_no_crop = False
-    print("\n[ Alignment Options ]")
-    print("If you encoded without cropping black bars, disable Auto-Crop.")
-    opt_crop = input("Force 1:1 comparison (Disable Auto-Crop)? [y/N]: ").strip().lower()
-    if opt_crop == 'y':
-        force_no_crop = True
-        print(f"{Colors.WARNING}→ Auto-Crop Disabled (1:1 Mode).{Colors.ENDC}")
-
-    crop_filter_chain = ""
-    if not force_no_crop:
-        ref_w, ref_h = get_resolution(ref_path)
-        dist_w, dist_h = get_resolution(dist_path)
-        if ref_w > 0 and dist_w > 0:
-            if ref_h > dist_h or ref_w > dist_w:
-                print(f"{Colors.CYAN}ℹ️ Resolution mismatch detected.{Colors.ENDC}")
-                crop_w, crop_h = dist_w, dist_h
-                crop_x, crop_y = (ref_w - dist_w) // 2, (ref_h - dist_h) // 2
-                crop_filter_chain = f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y}[ref_cropped];"
-                print(f"{Colors.GREEN}→ Applying Auto-Crop to Reference.{Colors.ENDC}")
-    
-    print("\n3. Choose Metric (q=Back):")
-    print(" [1] VMAF")
-    print(" [2] SSIM")
-    metric_choice = input("> ").strip()
-    if metric_choice.lower() == 'q': return
-
-    output_report = Path(dist_path).parent / f"quality_log_{Path(dist_path).stem}.txt"
-    json_report = Path(dist_path).parent / f"vmaf_report_{Path(dist_path).stem}.json"
-    
-    ref_label = "[0:v]"
-    dist_label = "[1:v]"
-    if crop_filter_chain: ref_label = "[ref_cropped]"
-
-    cmd_base = ["ffmpeg", "-i", ref_path, "-i", dist_path]
-    filter_complex = ""
-    metric_name = ""
-
-    if metric_choice == "1":
-        metric_name = "VMAF"
-        print("\nChoose VMAF Model:")
-        print(" [1] 4K HDR")
-        print(" [2] 1080p SDR")
-        m_choice = input("> ").strip()
-        model = "vmaf_v0.6.1"
-        if m_choice == "1": model = "vmaf_4k_v0.6.1"
-        filter_complex = f"{crop_filter_chain}{dist_label}{ref_label}libvmaf=model=version={model}:n_subsample=10:log_fmt=json:log_path={json_report}"
-
-    elif metric_choice == "2":
-        metric_name = "SSIM"
-        filter_complex = f"{crop_filter_chain}{dist_label}{ref_label}ssim=stats_file={output_report}"
-    
-    else: print("Invalid choice."); return
-
-    print(f"\n{Colors.BLUE}🚀 Starting {metric_name} analysis...{Colors.ENDC}")
-    cmd = cmd_base + ["-filter_complex", filter_complex, "-f", "null", "-"]
-
-    try:
-        process = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
-        stderr_output = process.stderr
-        print(f"\n{Colors.GREEN}✅ Analysis Complete.{Colors.ENDC}")
-
-        score = "N/A"
-        if metric_choice == "1":
-             if os.path.exists(json_report):
-                with open(json_report, 'r') as jf:
-                    data = json.load(jf)
-                    if "pooled_metrics" in data:
-                        score = data["pooled_metrics"].get("vmaf", {}).get("mean", "N/A")
-        else:
-             score = parse_ssim_output(stderr_output)
-
-        print("-" * 40)
-        print(f"{Colors.BOLD}{metric_name} RESULT:{Colors.ENDC}")
-        print(f"Score: {Colors.BOLD}{score}{Colors.ENDC}")
-        rating, comment, color = get_quality_verdict(score, metric_name)
-        print(f"Verdict:  {color}{rating}{Colors.ENDC}")
-        print(f"Notes:    {comment}")
-        print("-" * 40)
-
-    except KeyboardInterrupt:
-        print("\nInterrupted by user.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-# ============================================================
 # MODE: ENCODING (Supports Direct Handoff)
 # ============================================================
 def mode_encode(direct_file=None, direct_preset=None):
@@ -696,7 +590,6 @@ def mode_encode(direct_file=None, direct_preset=None):
 
     current_preset = None
     
-    # 1. Preset Selection
     if direct_preset:
         current_preset = direct_preset
         print(f"\n{Colors.CYAN}★ Preset selected from Benchmark: {current_preset['name']}{Colors.ENDC}")
@@ -713,7 +606,6 @@ def mode_encode(direct_file=None, direct_preset=None):
         else:
             return
 
-    # 2. File Selection
     files = []
     if direct_file:
         files.append(direct_file)
@@ -803,12 +695,18 @@ def mode_encode(direct_file=None, direct_preset=None):
         for t in j['sel_audio']:
             action = "COPY"
             if j['audio_mode'] == "eac3":
-                if t['codec'] in ['ac3', 'eac3']: action = "SMART COPY (Native AC3/EAC3)"
-                else: action = "CONVERT (EAC3 640k)"
-            elif j['audio_mode'] == "aac": action = "CONVERT (AAC 2.0)"
-            elif t['codec'] not in current_preset['passthrough']: action = "CONVERT (Fallback AC3)"
+                if t['codec'] in ['ac3', 'eac3']:
+                    action = "SMART COPY (Native AC3/EAC3)"
+                elif t['channels'] <= 2:
+                    action = "SMART COPY (Stereo/Mono - No Bloat)"
+                else:
+                    action = "CONVERT (EAC3 640k)"
+            elif j['audio_mode'] == "aac":
+                action = "CONVERT (AAC 2.0)"
+            elif t['codec'] not in current_preset['passthrough']:
+                action = "CONVERT (Fallback AC3)"
             
-            print(f"  - [{t['lang'].upper()}] {t['codec']}: {action}")
+            print(f"  - [{t['lang'].upper()}] {t['codec']} ({t['channels']}ch): {action}")
             
         print("Subtitles:")
         if not j['sel_subs']:
@@ -852,10 +750,70 @@ def mode_encode(direct_file=None, direct_preset=None):
             if job['audio_mode'] == "eac3":
                 if track['codec'] in ['ac3', 'eac3']:
                     cmd += [f"-c:a:{a_idx}", "copy"]
+                elif track['channels'] <= 2:
+                    cmd += [f"-c:a:{a_idx}", "copy"]
                 else:
                     cmd += [f"-c:a:{a_idx}", "eac3", f"-b:a:{a_idx}", "640k"]
             elif job['audio_mode'] == "aac":
                 cmd += [f"-c:a:{a_idx}", "aac", f"-b:a:{a_idx}", "256k", "-ac", "2"]
             else:
                 if track['codec'] in current_preset["passthrough"]:
-                    cmd +=
+                    cmd += [f"-c:a:{a_idx}", "copy"]
+                else:
+                    cmd += [f"-c:a:{a_idx}", "ac3", f"-b:a:{a_idx}", current_preset["audio_bitrate"]]
+            a_idx += 1
+            
+        for track in job['sel_subs']: cmd += ["-map", f"0:{track['index']}"]
+        if job['sel_subs']: cmd += ["-c:s", "copy"]
+            
+        cmd.append(str(job['output']))
+        
+        if run_ffmpeg_piped(cmd, job['duration']):
+            in_size = job['input'].stat().st_size
+            out_file = Path(str(job['output']))
+            if out_file.exists():
+                out_size = out_file.stat().st_size
+                ratio = (out_size / in_size) * 100
+                diff = in_size - out_size
+                
+                print(f"{Colors.CYAN}📊 FILE STATS:{Colors.ENDC}")
+                print(f"  Original:  {format_size(in_size)}")
+                print(f"  Encoded:   {format_size(out_size)}")
+                print(f"  Ratio:     {ratio:.1f}% (Saved {format_size(diff)})")
+            
+            print(f"{Colors.GREEN}✔ File completed.{Colors.ENDC}")
+        else:
+            print(f"{Colors.FAIL}❌ Error.{Colors.ENDC}")
+            
+        if i < len(jobs) - 1:
+            print("Cooling down 5s..."); time.sleep(5); gc.collect()
+
+# ============================================================
+# MAIN ENTRY POINT
+# ============================================================
+def main():
+    print(f"{Colors.BOLD}=== MEDIAENC – Ultimate Suite v9.2.1 (International) ==={Colors.ENDC}")
+    check_deps()
+    
+    while True:
+        print("\nSelect Mode:")
+        print(f" {Colors.GREEN}[1] ENCODE (CPU/GPU){Colors.ENDC}")
+        print(f" {Colors.CYAN}[2] QUALITY CHECK (VMAF / SSIM){Colors.ENDC}")
+        print(f" {Colors.WARNING}[3] BENCHMARK (Compare Presets){Colors.ENDC}")
+        print(f" [q] Exit")
+        
+        choice = input("> ").strip().lower()
+        
+        if choice == "1":
+            mode_encode()
+        elif choice == "2":
+            mode_quality_check()
+        elif choice == "3":
+            mode_test_bench()
+        elif choice == "q":
+            sys.exit(0)
+        else:
+            print("Invalid choice.")
+
+if __name__ == "__main__":
+    main()
