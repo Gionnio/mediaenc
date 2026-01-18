@@ -3,9 +3,9 @@
 
 """
 MEDIAENC - Ultimate Encoding Suite
-Version: 9.2.2 (International)
+Version: 9.2.4 (International)
 Description: Professional CLI video encoder optimized for macOS Apple Silicon.
-             Features: Queue Manager (Import/Export/Append), Universal Remux, Smart Audio.
+             Features: Queue Merge, Batch Summary, Safe Benchmark, Smart Audio.
 """
 
 import subprocess
@@ -33,14 +33,16 @@ class Colors:
     BOLD = "\033[1m"
 
 # ============================================================
-# CONFIGURATION & PRESETS
+# PRESETS
 # ============================================================
 PRESETS = {
     "0": {
         "id": "0",
         "name": "Remux (Video Copy - Audio-Sub Only)",
         "type": "copy",
-        "video_opts": ["-c:v", "copy"],
+        "video_opts": [
+            "-c:v", "copy"
+        ],
         "audio_bitrate": "320k",
         "passthrough": ["aac", "ac3", "eac3", "dtshd", "dts", "mp3", "opus", "truehd", "flac"]
     },
@@ -49,9 +51,15 @@ PRESETS = {
         "name": "4K VideoToolbox (CQ 65)",
         "type": "gpu",
         "video_opts": [
-            "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le",
-            "-fps_mode", "vfr", "-color_range", "tv", "-color_primaries", "bt2020",
-            "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-q:v", "65"
+            "-c:v", "hevc_videotoolbox",
+            "-profile:v", "main10",
+            "-pix_fmt", "p010le",
+            "-fps_mode", "vfr",
+            "-color_range", "tv",
+            "-color_primaries", "bt2020",
+            "-color_trc", "smpte2084",
+            "-colorspace", "bt2020nc",
+            "-q:v", "65"
         ],
         "audio_bitrate": "320k",
         "passthrough": ["aac", "ac3", "eac3", "dtshd", "dts", "mp3", "opus", "truehd", "flac"]
@@ -61,9 +69,15 @@ PRESETS = {
         "name": "1080p VideoToolbox (CQ 65)",
         "type": "gpu",
         "video_opts": [
-            "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le",
-            "-fps_mode", "vfr", "-color_range", "tv", "-color_primaries", "bt709",
-            "-color_trc", "bt709", "-colorspace", "bt709", "-q:v", "65"
+            "-c:v", "hevc_videotoolbox",
+            "-profile:v", "main10",
+            "-pix_fmt", "p010le",
+            "-fps_mode", "vfr",
+            "-color_range", "tv",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-colorspace", "bt709",
+            "-q:v", "65"
         ],
         "audio_bitrate": "256k",
         "passthrough": ["aac", "ac3", "eac3", "dtshd", "dts", "mp3", "truehd"]
@@ -73,10 +87,17 @@ PRESETS = {
         "name": "4K CPU x265 (Medium - CRF 18)",
         "type": "cpu",
         "video_opts": [
-            "-c:v", "libx265", "-preset", "medium", "-crf", "18", "-profile:v", "main10",
-            "-pix_fmt", "yuv420p10le", "-x265-params", "sao=0:aq-mode=2:hdr10_opt=1:repeat-headers=1",
-            "-color_range", "tv", "-color_primaries", "bt2020", "-color_trc", "smpte2084",
-            "-colorspace", "bt2020nc", "-tag:v", "hvc1"
+            "-c:v", "libx265",
+            "-preset", "medium",
+            "-crf", "18",
+            "-profile:v", "main10",
+            "-pix_fmt", "yuv420p10le",
+            "-x265-params", "sao=0:aq-mode=2:hdr10_opt=1:repeat-headers=1",
+            "-color_range", "tv",
+            "-color_primaries", "bt2020",
+            "-color_trc", "smpte2084",
+            "-colorspace", "bt2020nc",
+            "-tag:v", "hvc1"
         ],
         "audio_bitrate": "320k",
         "passthrough": ["aac", "ac3", "eac3", "dtshd", "dts", "mp3", "opus", "truehd", "flac"]
@@ -86,10 +107,18 @@ PRESETS = {
         "name": "4K High Bitrate VBR (24Mbps)",
         "type": "gpu",
         "video_opts": [
-            "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le",
-            "-fps_mode", "vfr", "-color_range", "tv", "-color_primaries", "bt2020",
-            "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-tag:v", "hvc1",
-            "-b:v", "24000k", "-maxrate", "35000k", "-bufsize", "35000k"
+            "-c:v", "hevc_videotoolbox",
+            "-profile:v", "main10",
+            "-pix_fmt", "p010le",
+            "-fps_mode", "vfr",
+            "-color_range", "tv",
+            "-color_primaries", "bt2020",
+            "-color_trc", "smpte2084",
+            "-colorspace", "bt2020nc",
+            "-tag:v", "hvc1",
+            "-b:v", "24000k",
+            "-maxrate", "35000k",
+            "-bufsize", "35000k"
         ],
         "audio_bitrate": "320k",
         "passthrough": ["aac", "ac3", "eac3", "dtshd", "dts", "mp3", "opus", "truehd", "flac"]
@@ -131,6 +160,23 @@ def get_file_info(path):
         return json.loads(res.stdout)
     except: return None
 
+def get_total_duration(info):
+    try:
+        d = float(info.get("format", {}).get("duration", 0))
+        if d > 0: return d
+    except: pass
+    for s in info.get("streams", []):
+        if s.get("codec_type") == "video":
+            try:
+                d = float(s.get("duration", 0))
+                if d > 0: return d
+            except: pass
+            try:
+                d = float(s.get("tags", {}).get("DURATION", "0").split(":")[2])
+                if d > 0: return d
+            except: pass
+    return 0.0
+
 def get_resolution(path):
     info = get_file_info(path)
     if info:
@@ -160,19 +206,29 @@ def save_queue(jobs):
     print(f"\n{Colors.CYAN}--- EXPORT QUEUE ---{Colors.ENDC}")
     default_name = "mediaenc_queue.json"
     desktop_path = Path.home() / "Desktop"
-    
     fname = input(f"Filename (Enter for '{default_name}'): ").strip()
     if not fname: fname = default_name
     if not fname.endswith(".json"): fname += ".json"
-    
     full_path = desktop_path / fname
-    
     try:
-        with open(full_path, 'w') as f:
-            json.dump(jobs, f, indent=4, cls=JobEncoder)
+        with open(full_path, 'w') as f: json.dump(jobs, f, indent=4, cls=JobEncoder)
         print(f"{Colors.GREEN}✔ Queue saved to: {full_path}{Colors.ENDC}")
+    except Exception as e: print(f"{Colors.FAIL}Save error: {e}{Colors.ENDC}")
+
+def parse_json_queue(path_str):
+    path = Path(clean_input_path(path_str))
+    if not path.exists():
+        print(f"{Colors.FAIL}File not found.{Colors.ENDC}")
+        return None
+    try:
+        with open(path, 'r') as f: jobs_data = json.load(f)
+        for job in jobs_data:
+            job['input'] = Path(job['input'])
+            job['output'] = Path(job['output'])
+        return jobs_data
     except Exception as e:
-        print(f"{Colors.FAIL}Save error: {e}{Colors.ENDC}")
+        print(f"{Colors.FAIL}Load error: {e}{Colors.ENDC}")
+        return None
 
 def load_queue():
     print(f"\n{Colors.CYAN}--- IMPORT QUEUE ---{Colors.ENDC}")
@@ -180,24 +236,10 @@ def load_queue():
     raw_path = input("> ").strip()
     if raw_path.lower() == 'q': return None
     
-    path = Path(clean_input_path(raw_path))
-    if not path.exists():
-        print(f"{Colors.FAIL}File not found.{Colors.ENDC}")
-        return None
-        
-    try:
-        with open(path, 'r') as f:
-            jobs_data = json.load(f)
-        
-        for job in jobs_data:
-            job['input'] = Path(job['input'])
-            job['output'] = Path(job['output'])
-            
+    jobs_data = parse_json_queue(raw_path)
+    if jobs_data:
         print(f"{Colors.GREEN}✔ Loaded {len(jobs_data)} jobs.{Colors.ENDC}")
-        return jobs_data
-    except Exception as e:
-        print(f"{Colors.FAIL}Load error: {e}{Colors.ENDC}")
-        return None
+    return jobs_data
 
 # ============================================================
 # CROP & TRACKS
@@ -313,7 +355,10 @@ def run_ffmpeg_piped(cmd, total_duration):
                     except: pass
                 elif key == "progress" and value in ["continue", "end"]:
                     current_sec = out_time_us / 1_000_000
-                    pct = min(100, (current_sec / total_duration) * 100) if total_duration > 0 else 0
+                    pct = 0
+                    if total_duration > 0:
+                        pct = min(100, (current_sec / total_duration) * 100)
+                    
                     elapsed = format_time(time.time() - start_time)
                     eta = "--:--:--"
                     if pct > 0:
@@ -374,7 +419,7 @@ def mode_test_bench():
 
     info = get_file_info(input_path)
     if not info: return
-    duration = float(info.get("format", {}).get("duration", 0))
+    duration = get_total_duration(info)
     start_time = duration / 2
     
     while True:
@@ -420,6 +465,7 @@ def mode_test_bench():
                 # Metrics
                 if is_copy: vmaf, ssim = 100.0, 1.0
                 else:
+                    print(f"   {Colors.BLUE}⚙️ Calculating metrics (VMAF/SSIM) - Please wait...{Colors.ENDC}")
                     ref_chain = "[1:v]"
                     if force_10bit: ref_chain += "format=yuv420p10le,"
                     if "1080p" in preset['name']: ref_chain += "scale=1920:-2:flags=lanczos,"
@@ -429,14 +475,19 @@ def mode_test_bench():
                     subprocess.run(["ffmpeg", "-flags2", "+ignorecrop", "-i", str(out_file), "-flags2", "+ignorecrop", "-i", str(ref_file), "-filter_complex", f"{ref_chain}[ref];[0:v][ref]libvmaf=model=version=vmaf_v0.6.1:n_subsample=10:log_fmt=json:log_path={json_vmaf}", "-f", "null", "-"], stderr=subprocess.DEVNULL)
                     vmaf = 0
                     if json_vmaf.exists():
-                        with open(json_vmaf, 'r') as f: vmaf = json.load(f).get("pooled_metrics", {}).get("vmaf", {}).get("mean", 0)
+                        try:
+                            with open(json_vmaf, 'r') as f: vmaf = json.load(f).get("pooled_metrics", {}).get("vmaf", {}).get("mean", 0)
+                        except: pass
                         os.remove(json_vmaf)
                     
                     p_ssim = subprocess.run(["ffmpeg", "-flags2", "+ignorecrop", "-i", str(out_file), "-flags2", "+ignorecrop", "-i", str(ref_file), "-filter_complex", f"{ref_chain}[ref];[0:v][ref]ssim", "-f", "null", "-"], stderr=subprocess.PIPE, text=True)
                     ssim = parse_ssim_output(p_ssim.stderr)
 
                 size_gb = (out_file.stat().st_size / 45) * duration / (1024**3)
-                audio_kbps = int(preset.get('audio_bitrate', '320k').replace('k', ''))
+                audio_bitrate_str = preset.get('audio_bitrate', '320k')
+                try: audio_kbps = int(audio_bitrate_str.replace('k', ''))
+                except: audio_kbps = 320
+                
                 size_gb += (audio_kbps * duration) / 8 / 1024 / 1024
                 
                 results.append({"preset": preset, "name": preset['name'], "fps": fps_avg, "vmaf": vmaf, "ssim": ssim, "size_gb": size_gb})
@@ -563,7 +614,7 @@ def wizard_new_jobs(direct_file=None, direct_preset=None):
         info = get_file_info(f)
         if not info: continue
         
-        duration = float(info.get("format", {}).get("duration", 0))
+        duration = get_total_duration(info)
         streams = info.get("streams", [])
         hdr_found = is_hdr(streams)
         
@@ -615,6 +666,9 @@ def wizard_new_jobs(direct_file=None, direct_preset=None):
 # ============================================================
 def run_job_execution(jobs):
     zscale_available = has_zscale()
+    total_in = 0
+    total_out = 0
+    
     for i, job in enumerate(jobs):
         print(f"\n{Colors.BOLD}Processing {i+1}/{len(jobs)}: {job['input'].name}{Colors.ENDC}")
         current_preset = job['preset']
@@ -660,15 +714,26 @@ def run_job_execution(jobs):
         
         if run_ffmpeg_piped(cmd, job['duration']):
             in_size = job['input'].stat().st_size
+            total_in += in_size
             if Path(str(job['output'])).exists():
                 out_size = Path(str(job['output'])).stat().st_size
+                total_out += out_size
                 ratio = (out_size / in_size) * 100
                 diff = in_size - out_size
-                print(f"{Colors.CYAN}📊 Ratio: {ratio:.1f}% (Saved: {format_size(diff)}){Colors.ENDC}")
-            print(f"{Colors.GREEN}✔ File completed.{Colors.ENDC}")
+                print(f"{Colors.GREEN}✔ File completed.{Colors.ENDC}")
+                print(f"  {Colors.CYAN}Orig: {format_size(in_size)} -> Enc: {format_size(out_size)} (Ratio: {ratio:.1f}%){Colors.ENDC}")
         
         if i < len(jobs) - 1:
             print("Cooling down 5s..."); time.sleep(5); gc.collect()
+
+    if len(jobs) > 1 and total_in > 0:
+        print(f"\n{Colors.HEADER}=== BATCH SUMMARY ==={Colors.ENDC}")
+        print(f"Files Processed:  {len(jobs)}")
+        print(f"Total Original:   {format_size(total_in)}")
+        print(f"Total Encoded:    {format_size(total_out)}")
+        saved = total_in - total_out
+        pct = (saved / total_in) * 100 if total_in > 0 else 0
+        print(f"Total Saved:      {format_size(saved)} ({pct:.1f}%)")
 
 def mode_queue_manager(jobs=[]):
     if not jobs: print("Queue empty."); return
@@ -680,7 +745,8 @@ def mode_queue_manager(jobs=[]):
             print(f"   Audio: {len(j['sel_audio'])} tracks | Mode: {j['audio_mode']}")
         print("-" * 40)
         print(f"{Colors.GREEN}[s] START (Execute Jobs){Colors.ENDC}")
-        print(f"{Colors.CYAN}[a] APPEND (Add more files/presets){Colors.ENDC}")
+        print(f"{Colors.CYAN}[a] ADD FILES (Wizard){Colors.ENDC}")
+        print(f"{Colors.BLUE}[m] MERGE QUEUE (From JSON){Colors.ENDC}")
         print(f"{Colors.WARNING}[e] EXPORT (Save queue to file){Colors.ENDC}")
         print("[q] EXIT (Return to menu)")
         
@@ -692,12 +758,19 @@ def mode_queue_manager(jobs=[]):
             if add_jobs:
                 jobs.extend(add_jobs)
                 print(f"{Colors.GREEN}✔ Added {len(add_jobs)} new jobs.{Colors.ENDC}")
+        elif choice == 'm':
+            print("Drag JSON queue file to merge:")
+            jpath = input("> ").strip()
+            new_jobs = parse_json_queue(jpath)
+            if new_jobs:
+                jobs.extend(new_jobs)
+                print(f"{Colors.GREEN}✔ Merged {len(new_jobs)} jobs.{Colors.ENDC}")
         elif choice == 'e': save_queue(jobs)
         elif choice == 'q': return
         else: print("Invalid choice.")
 
 def main():
-    print(f"{Colors.BOLD}=== MEDIAENC – Ultimate Suite v9.2.2 (Queue Manager) ==={Colors.ENDC}")
+    print(f"{Colors.BOLD}=== MEDIAENC – Ultimate Suite v9.2.4 (Batch Summary) ==={Colors.ENDC}")
     check_deps()
     while True:
         print("\nSelect Mode:")
